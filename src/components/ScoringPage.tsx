@@ -1,9 +1,11 @@
+// src/components/ScoringPage.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { Course, Match, MatchSide, Player, Team } from '../types';
 
 /* ----------------- constants & helpers ----------------- */
 
 const ALLOWANCE_SINGLES = 0.75;
+// По вашему требованию: для бэстболла тоже 75%
 const ALLOWANCE_FOURBALL = 0.75;
 
 function safePars(course: Course): number[] {
@@ -78,7 +80,7 @@ function HoleChip({ value, active, faint, star, color }:{
 }
 function BarLabel({children}:{children:React.ReactNode}){ return <div className="px-4 py-1 rounded-2xl border text-xs md:text-sm font-semibold">{children}</div>; }
 
-/* ----------------- types for draft ----------------- */
+/* ----------------- draft types ----------------- */
 
 type Draft = {
   A: { team: number|null| -1; players: Record<string, number|null| -1> };
@@ -110,7 +112,7 @@ export default function ScoringPage({
   const aPlayerIds = expandSide(match.sideA, teams);
   const bPlayerIds = expandSide(match.sideB, teams);
 
-  /* ---------- DERIVED: per-hole winners for view ---------- */
+  /* ---------- VIEW meta ---------- */
   const metas: PerHoleMeta[] = useMemo(()=>{
     const arr: PerHoleMeta[] = [];
     const allow = match.format==='singles'?ALLOWANCE_SINGLES:ALLOWANCE_FOURBALL;
@@ -190,8 +192,8 @@ export default function ScoringPage({
 
   /* ---------- DRAFT for inputs ---------- */
 
-  const initialDraft = (): Draft => {
-    const hi = hole - 1;
+  const buildDraftFor = (h:number): Draft => {
+    const hi = h - 1;
     const d: Draft = { A: { team: null, players: {} }, B: { team: null, players: {} } };
     d.A.team = (match.scoresA || [])[hi] ?? null;
     d.B.team = (match.scoresB || [])[hi] ?? null;
@@ -200,42 +202,57 @@ export default function ScoringPage({
     return d;
   };
 
-  const [draft, setDraft] = useState<Draft>(initialDraft);
-  useEffect(()=>{ setDraft(initialDraft()); }, [hole, match.id]);
+  const [draft, setDraft] = useState<Draft>(buildDraftFor(hole));
 
-  // сравнить черновик с исходником для текущей лунки и отправить только изменения
+  // Синхронизация черновика при:
+  // - смене лунки
+  // - любом обновлении пропа match (после рефетча из MatchPage)
+  useEffect(()=>{ setDraft(buildDraftFor(hole)); }, [hole]);
+  useEffect(()=>{ setDraft(buildDraftFor(hole)); }, [JSON.stringify(match)]);
+
+  // Сравнение и отправка только изменённых значений.
+  // ВАЖНО: при прочерке отправляем gross=null и dash=true (НЕ -1!)
   const persistCurrentHole = async () => {
     if (!onScore || readOnly) return;
     const hi = hole - 1;
-    const calls: Array<Promise<any>|void> = [];
+    const tasks: Array<Promise<any>|void> = [];
 
-    // team values
     const origATeam = (match.scoresA || [])[hi] ?? null;
     const origBTeam = (match.scoresB || [])[hi] ?? null;
+
+    const norm = (v:number|null| -1) => {
+      if (v === -1) return { gross: null, dash: true };
+      return { gross: v, dash: false };
+      // null -> {gross:null, dash:false} — сервер трактует как "очищено"
+    };
+
     if (draft.A.team !== origATeam) {
-      calls.push(onScore({ side:'A', hole, playerId:null, gross: draft.A.team === -1 ? -1 : draft.A.team, dash: draft.A.team === -1 }) as any);
+      const { gross, dash } = norm(draft.A.team);
+      tasks.push(onScore({ side:'A', hole, playerId:null, gross, dash }) as any);
     }
     if (draft.B.team !== origBTeam) {
-      calls.push(onScore({ side:'B', hole, playerId:null, gross: draft.B.team === -1 ? -1 : draft.B.team, dash: draft.B.team === -1 }) as any);
+      const { gross, dash } = norm(draft.B.team);
+      tasks.push(onScore({ side:'B', hole, playerId:null, gross, dash }) as any);
     }
 
-    // per-player values
     for (const pid of aPlayerIds) {
       const orig = (match.playerScoresA?.[pid] ?? [])[hi] ?? null;
       const val = draft.A.players[pid] ?? null;
       if (val !== orig) {
-        calls.push(onScore({ side:'A', hole, playerId:pid, gross: val === -1 ? -1 : val, dash: val === -1 }) as any);
+        const { gross, dash } = norm(val);
+        tasks.push(onScore({ side:'A', hole, playerId:pid, gross, dash }) as any);
       }
     }
     for (const pid of bPlayerIds) {
       const orig = (match.playerScoresB?.[pid] ?? [])[hi] ?? null;
       const val = draft.B.players[pid] ?? null;
       if (val !== orig) {
-        calls.push(onScore({ side:'B', hole, playerId:pid, gross: val === -1 ? -1 : val, dash: val === -1 }) as any);
+        const { gross, dash } = norm(val);
+        tasks.push(onScore({ side:'B', hole, playerId:pid, gross, dash }) as any);
       }
     }
 
-    if (calls.length) await Promise.all(calls);
+    if (tasks.length) await Promise.all(tasks);
   };
 
   /* ---------- VIEW (readOnly) ---------- */
