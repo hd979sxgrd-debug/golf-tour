@@ -1,59 +1,98 @@
 import React, { useEffect, useState } from 'react';
-import { apiGetMatch, apiSubmitScore } from '../api';
+import { apiBootstrap, apiGetMatch, apiSubmitScore } from '../api';
 import { Course, Match, Player, Team } from '../types';
 import ScoringPage from '../components/ScoringPage';
-import { useStore } from '../store';
 
+/**
+ * Контейнер матча без зависимости от store:
+ * - грузит players/teams через bootstrap
+ * - грузит match + course
+ * - прокидывает onScore (оптимистичное обновление + POST + мягкий рефетч)
+ */
 export default function MatchPage({ matchId, readOnlyParam }: { matchId: string; readOnlyParam?: boolean }) {
-  const { players, teams } = useStore();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [match, setMatch] = useState<Match | null>(null);
   const [course, setCourse] = useState<Course | null>(null);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
 
-  const readOnly = !!readOnlyParam || (new URLSearchParams(window.location.search).get('view') === 'public');
+  const readOnly =
+    !!readOnlyParam || new URLSearchParams(window.location.search).get('view') === 'public';
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      setLoaded(false); setError(null);
+      setLoaded(false);
+      setError(null);
       try {
+        // Грузим базовые справочники
+        const boot = await apiBootstrap();
+        if (!alive) return;
+        setPlayers(boot.players || []);
+        setTeams(boot.teams || []);
+
+        // Грузим матч
         const { match, course } = await apiGetMatch(matchId);
         if (!alive) return;
-        setMatch(match); setCourse(course); setLoaded(true);
+        setMatch(match);
+        setCourse(course);
+        setLoaded(true);
       } catch (e: any) {
         if (!alive) return;
-        setError(e.message || String(e)); setLoaded(true);
+        setError(e?.message || String(e));
+        setLoaded(true);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [matchId]);
 
-  const onScore = async (p: { side: 'A' | 'B'; hole: number; playerId?: string | null; gross?: number | null; dash?: boolean; }) => {
+  const onScore = async (p: {
+    side: 'A' | 'B';
+    hole: number;
+    playerId?: string | null;
+    gross?: number | null;
+    dash?: boolean;
+  }) => {
     if (!match) return;
-    // оптимистичное обновление
+    // оптимистично меняем локальную копию
     const copy: Match = JSON.parse(JSON.stringify(match));
     const hi = p.hole - 1;
+
     if (p.playerId) {
       const key = p.side === 'A' ? 'playerScoresA' : 'playerScoresB';
-      copy[key] = copy[key] || {};
-      const arr = copy[key]![p.playerId] || Array(18).fill(null);
+      (copy as any)[key] = (copy as any)[key] || {};
+      const arr: (number | null)[] = ((copy as any)[key][p.playerId] as (number | null)[]) || Array(18).fill(null);
       arr[hi] = p.dash ? -1 : (p.gross ?? null);
-      copy[key]![p.playerId] = arr;
+      (copy as any)[key][p.playerId] = arr;
     } else {
       const key = p.side === 'A' ? 'scoresA' : 'scoresB';
-      const arr = copy[key] || Array(18).fill(null);
+      const arr: (number | null)[] = ((copy as any)[key] as (number | null)[]) || Array(18).fill(null);
       arr[hi] = p.dash ? -1 : (p.gross ?? null);
       (copy as any)[key] = arr;
     }
     setMatch(copy);
 
+    // отправляем на бэк
     try {
-      await apiSubmitScore({ matchId, side: p.side, hole: p.hole, playerId: p.playerId ?? null, gross: p.gross ?? null, dash: !!p.dash });
-      const { match: fresh, course: freshCourse } = await apiGetMatch(matchId);
-      setMatch(fresh); setCourse(freshCourse);
+      await apiSubmitScore({
+        matchId,
+        side: p.side,
+        hole: p.hole,
+        playerId: p.playerId ?? null,
+        gross: p.gross ?? null,
+        dash: !!p.dash,
+      });
+      // мягкий рефетч (подтягиваем правду сервера)
+      const fresh = await apiGetMatch(matchId);
+      setMatch(fresh.match);
+      setCourse(fresh.course);
     } catch (e) {
       console.error(e);
+      // оставляем оптимистичную версию до следующей загрузки
     }
   };
 
@@ -67,8 +106,8 @@ export default function MatchPage({ matchId, readOnlyParam }: { matchId: string;
         <ScoringPage
           match={match}
           course={course}
-          players={players as Player[]}
-          teams={teams as Team[]}
+          players={players}
+          teams={teams}
           readOnly={readOnly}
           onScore={readOnly ? undefined : onScore}
         />
