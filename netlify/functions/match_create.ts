@@ -64,10 +64,19 @@ export const handler: Handler = async (event) => {
     const pool = getPool();
     await ensureMatchesSchema(pool);
 
-    const { col: dayCol } = await resolveDayCol(pool);
+    const { col: dayCol, notNull } = await resolveDayCol(pool);
 
     // ЖЁСТКАЯ гарантия непустого значения дня:
+    // rawDay может быть пустой строкой, поэтому используем fallback 'Day 1'
     const dayValue = rawDay || 'Day 1';
+
+    // дополнительно: если колонка отмечена NOT NULL — никогда не передавать NULL
+    const dayParam: string | null = dayValue ?? (notNull ? 'Day 1' : null);
+
+    // DEBUG: логируем значения, которые пойдут в запрос (попадёт в логи Netlify)
+    console.error('DEBUG match_create:', {
+      id, name, dayCol, rawDay, dayValue, dayParam, notNull, format, courseId, sideACount: sideA.length, sideBCount: sideB.length
+    });
 
     const sql = `
       insert into matches (id, name, ${dayCol}, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id, created_at)
@@ -85,7 +94,7 @@ export const handler: Handler = async (event) => {
     `;
 
     const { rows } = await pool.query(sql, [
-      id, name, dayValue, format, courseId,
+      id, name, dayParam, format, courseId,
       JSON.stringify(sideA), JSON.stringify(sideB),
       sideATeamId, sideBTeamId
     ]);
