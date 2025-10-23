@@ -4,16 +4,16 @@ import PublicBoard from './components/PublicBoard';
 import ScoringPage from './components/ScoringPage';
 import { Course, Match, Player, Team } from './types';
 import { apiBootstrap, apiGetMatch, apiSubmitScore, apiCreateMatch, apiDeleteMatch } from './api';
+import MatchPage from './pages/MatchPage';
 
-function useHashRoute() {
-  const [hash, setHash] = useState(window.location.hash || '#/public');
-  useEffect(() => {
-    const fn = () => setHash(window.location.hash || '#/public');
-    window.addEventListener('hashchange', fn);
-    return () => window.removeEventListener('hashchange', fn);
-  }, []);
-  return (hash.replace(/^#/, '') || '/public') as string;
+// ...
+function useHashRoute(){
+  const [hash, setHash] = React.useState(window.location.hash || '#/public');
+  React.useEffect(()=>{ const fn=()=>setHash(window.location.hash||'#/public'); window.addEventListener('hashchange',fn); return ()=>window.removeEventListener('hashchange',fn); },[]);
+  return hash.replace(/^#/,'') || '/public';
 }
+
+
 
 const ROLE_KEY = 'role';
 const getRole = () => localStorage.getItem(ROLE_KEY) || 'viewer';
@@ -27,6 +27,12 @@ type MatchViewState = {
 
 export default function App() {
   const route = useHashRoute();
+
+  if (route.startsWith('/match/')) {
+    const id = route.split('/')[2];                       // /match/<id>
+    const readOnly = new URLSearchParams(window.location.search).get('view') === 'public';
+    return <MatchPage matchId={id} readOnlyParam={readOnly} />;
+  }
 
   // ------ auth ------
   const [role, setRoleState] = useState<string>(getRole());

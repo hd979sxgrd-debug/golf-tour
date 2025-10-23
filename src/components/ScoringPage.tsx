@@ -9,7 +9,6 @@ const ALLOWANCE_FOURBALL = 0.75;
 function safePars(course: Course): number[] {
   const p = Array.isArray(course.pars) ? course.pars : [];
   if (p.length === 18) return p as number[];
-  // дефолт: не даём упасть из-за пустых данных
   return [4,4,3,5,4,4,5,3,4, 4,5,3,4,4,5,3,4,4];
 }
 function safeSI(course: Course): (number|null)[] {
@@ -27,7 +26,7 @@ function toCourseHandicap(hi: number | undefined, course: Course) {
 }
 function shotsOnHole(courseHcp: number, holeIdx: number, si?: (number|null)[]) {
   if (!si || si.length !== 18) return 0;
-  const idx = si[holeIdx] ?? 99; // если нет SI — не даём строук
+  const idx = si[holeIdx] ?? 99;
   let shots = 0;
   if (courseHcp >= idx) shots += 1;
   if (courseHcp > 18 && courseHcp - 18 >= idx) shots += 1;
@@ -67,12 +66,12 @@ function labelUpDn(n:number){ if(n===0) return 'AS'; return n>0?`${n}UP`:`${Math
 function HoleChip({ value, active, faint, star, color }:{
   value: number|string|null|undefined; active?:boolean; faint?:boolean; star?:''|'*'|'**'; color?:'red'|'blue'|'gray';
 }) {
-  const base='inline-flex items-center justify-center rounded-full w-8 h-8 md:w-9 md:h-9 text-sm md:text-base font-semibold';
+  const base='inline-flex items-center justify-center rounded-full w-8 h-8 md:w-10 md:h-10 text-[13px] md:text-base font-semibold leading-none';
   const palette = color==='red'
-    ? active?'bg-red-600 text-white':'border-2 border-red-500 text-red-600'
+    ? active?'bg-red-600 text-white':'border-2 border-red-500 text-red-600 bg-white'
     : color==='blue'
-    ? active?'bg-blue-600 text-white':'border-2 border-blue-500 text-blue-700'
-    : active?'bg-gray-700 text-white':'border-2 border-gray-300 text-gray-600';
+    ? active?'bg-blue-600 text-white':'border-2 border-blue-500 text-blue-700 bg-white'
+    : active?'bg-gray-800 text-white':'border-2 border-gray-300 text-gray-600 bg-white';
   const opacity = faint?'opacity-40':'';
   return <span className={`${base} ${palette} ${opacity}`}>{value ?? '—'}{star?<sup className="ml-0.5 text-[10px]">{star}</sup>:null}</span>;
 }
@@ -100,7 +99,7 @@ export default function ScoringPage({
   const aName = useMemo(()=>sideName(match.sideA, players, teams),[match,players,teams]);
   const bName = useMemo(()=>sideName(match.sideB, players, teams),[match,players,teams]);
 
-  // вычисления на 18 лунок — не читаем undefined массивы
+  // вычисления на 18 лунок
   const metas: PerHoleMeta[] = useMemo(()=>{
     const arr: PerHoleMeta[] = [];
     const aPlayerIds = expandSide(match.sideA, teams);
@@ -115,12 +114,12 @@ export default function ScoringPage({
         playerId: pid, gross: Array.isArray(arr)? arr[hIdx] ?? null : null, dash: Array.isArray(arr) && arr[hIdx]===-1
       }));
     };
-    const pNet = (pid:string, gross:number|null|undefined, allow:number)=>{
+    const pNet = (pid:string, gross:number|null|undefined, allow:number, hIdx:number)=>{
       const hi = players.find(p=>p.id===pid)?.hcp ?? 0;
       const ch = Math.round(toCourseHandicap(hi, course) * allow);
       if (gross==null) return null;
       if (gross===-1) return { dash:true } as const;
-      const shots = shotsOnHole(ch, i, siArr as any);
+      const shots = shotsOnHole(ch, hIdx, siArr as any);
       return { net: gross - shots, star: starsFor(shots) } as const;
     };
 
@@ -130,7 +129,7 @@ export default function ScoringPage({
       const candsA: Array<{net:number;star:''|'*'|'**'}> = [];
       if (rowA.length){
         for(const r of rowA){
-          const v = pNet(r.playerId, r.gross, allowA);
+          const v = pNet(r.playerId, r.gross, allowA, i);
           if (!v) continue;
           if ('dash' in v) { if (match.format==='singles') candsA.push({net: Number.POSITIVE_INFINITY, star:''}); continue; }
           candsA.push({net:v.net, star:v.star});
@@ -144,7 +143,7 @@ export default function ScoringPage({
       const candsB: Array<{net:number;star:''|'*'|'**'}> = [];
       if (rowB.length){
         for(const r of rowB){
-          const v = pNet(r.playerId, r.gross, allowB);
+          const v = pNet(r.playerId, r.gross, allowB, i);
           if (!v) continue;
           if ('dash' in v) { if (match.format==='singles') candsB.push({net: Number.POSITIVE_INFINITY, star:''}); continue; }
           candsB.push({net:v.net, star:v.star});
@@ -173,7 +172,7 @@ export default function ScoringPage({
     }
     return arr;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [match, teams, players, course.cr, course.slope, /* use safe arrays only */]);
+  }, [match, teams, players, course.cr, course.slope]);
 
   const winners = metas.map(m=>m.winner);
   const upFront = winners.slice(0,9).reduce((acc,r)=> r==='A'?acc+1: r==='B'?acc-1: acc, 0);
