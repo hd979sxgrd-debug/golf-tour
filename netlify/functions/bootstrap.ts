@@ -1,3 +1,4 @@
+// netlify/functions/bootstrap.ts
 import type { Handler } from '@netlify/functions';
 import type { Pool } from 'pg';
 import { getPool } from './_shared/db';
@@ -25,6 +26,17 @@ async function siCol(pool: Pool): Promise<'stroke_index' | 'si' | 'strokeindex'>
   return 'stroke_index';
 }
 
+async function resolveTeamPlayersCol(pool: Pool): Promise<'player_ids' | 'playerids' | 'players' | 'members'> {
+  const { rows } = await pool.query(
+    `select column_name
+       from information_schema.columns
+      where table_name = 'teams' and column_name in ('player_ids','playerids','players','members')`
+  );
+  if (rows.length > 0) return rows[0].column_name;
+  await pool.query(`alter table teams add column if not exists player_ids text[]`);
+  return 'player_ids';
+}
+
 export const handler: Handler = async () => {
   try {
     const pool = getPool();
@@ -36,8 +48,9 @@ export const handler: Handler = async () => {
     )).rows;
 
     // ---- teams ----
+    const teamPlayersCol = await resolveTeamPlayersCol(pool);
     const teamsRaw = (await pool.query(
-      `select id, name, player_ids from teams order by name`
+      `select id, name, ${teamPlayersCol} as player_ids from teams order by name`
     )).rows;
     const teams = teamsRaw.map((t: any) => ({ id: t.id, name: t.name, playerIds: t.player_ids || [] }));
 
