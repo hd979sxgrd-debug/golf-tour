@@ -1,67 +1,74 @@
-// netlify/functions/match.ts
-import { Handler } from '@netlify/functions';
+import type { Handler } from '@netlify/functions';
+import type { Pool } from 'pg';
 import { getPool } from './_shared/db';
-import { ok, bad, cors } from './_shared/http';
+import { ok, bad } from './_shared/http';
+
+async function resolveDayCol(pool: Pool): Promise<'day' | 'match_day' | 'day_label'> {
+  const { rows } = await pool.query(
+    `select column_name from information_schema.columns
+     where table_name = 'matches' and column_name in ('day','match_day','day_label')`
+  );
+  if (rows.length > 0) return rows[0].column_name;
+  await pool.query(`alter table matches add column if not exists day text`);
+  return 'day';
+}
 
 export const handler: Handler = async (event) => {
-  if (event.httpMethod === 'OPTIONS') return cors();
-
-  const id = event.queryStringParameters?.id;
-  if (!id) return bad('id is required');
-
-  const pool = getPool();
   try {
-    const { rows: mRows } = await pool.query(
-      `SELECT id, name, day_label as "day", format, course_id as "courseId",
-              side_a_team_id as "sideATeamId", side_b_team_id as "sideBTeamId"
-       FROM matches WHERE id=$1`, [id]
+    const id = event.queryStringParameters?.id;
+    if (!id) return bad('id is required');
+
+    const pool = getPool();
+    const dayCol = await resolveDayCol(pool);
+
+    const mres = await pool.query(
+      `select id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
+       from matches where id = $1`, [id]
     );
-    if (mRows.length === 0) return bad('Match not found', 404);
-    const match = mRows[0];
+    if (mres.rowCount === 0) return bad('match not found', 404);
+    const match = mres.rows[0];
 
-    const { rows: courseRows } = await pool.query(
-      `SELECT id, name, cr, slope, pars, stroke_idx as "strokeIndex"
-       FROM courses WHERE id=$1`, [match.courseId]
-    );
-    const course = courseRows[0];
-
-    const { rows: sides } = await pool.query(
-      `SELECT side, player_id FROM match_sides WHERE match_id=$1`, [id]
-    );
-
-    const sideA = sides.filter(s => s.side === 'A').map(s => ({ type: 'player', id: s.player_id }));
-    const sideB = sides.filter(s => s.side === 'B').map(s => ({ type: 'player', id: s.player_id }));
-
-    const { rows: scores } = await pool.query(
-      `SELECT side, player_id, hole, gross, dash
-       FROM hole_scores WHERE match_id=$1
-       ORDER BY side, player_id NULLS FIRST, hole`, [id]
-    );
-
-    // Соберём playerScoresA/B: Record<playerId, number[]>, dash=-1
-    const playerScoresA: Record<string, (number|null)[]> = {};
-    const playerScoresB: Record<string, (number|null)[]> = {};
-    const scoresA = Array(18).fill(null);
-    const scoresB = Array(18).fill(null);
-
-    for (const r of scores) {
-      const idx = (r.hole as number) - 1;
-      const val = r.dash ? -1 : (typeof r.gross === 'number' ? r.gross : null);
-      if (!r.player_id) {
-        if (r.side === 'A') scoresA[idx] = val;
-        else scoresB[idx] = val;
-      } else {
-        const map = r.side === 'A' ? playerScoresA : playerScoresB;
-        if (!map[r.player_id]) map[r.player_id] = Array(18).fill(null);
-        map[r.player_id][idx] = val;
-      }
-    }
+    const cres = await pool.query(`select id, name, cr, slope, pars,
+      (select column_name from information_schema.columns
+         where table_name='courses' and column_name in ('stroke_index','si','strokeindex')
+         limit 1) as _si_col
+    `);
+    // упрощённо: отдельным запросом возьмём курс
+    const course = (await pool.query(
+      `select id, name, cr, slope, pars,
+        (case
+          when exists(select 1 from information_schema.columns where table_name='courses' and column_name='stroke_index') then stroke_index
+          when exists(select 1 from information_schema.columns where table_name='courses' and column_name='si') then si
+          when exists(select 1 from information_schema.columns where table_name='courses' and column_name='strokeindex') then strokeindex
+          else null end) as stroke_index
+       from courses where id = $1
+      `,
+      [match.course_id]
+    )).rows[0] || null;
 
     return ok({
-      match: { ...match, sideA, sideB, scoresA, scoresB, playerScoresA, playerScoresB },
-      course
+      match: {
+        id: match.id,
+        name: match.name,
+        day: match.day,
+        format: match.format,
+        courseId: match.course_id,
+        sideA: match.side_a,
+        sideB: match.side_b,
+        sideATeamId: match.side_a_team_id || undefined,
+        sideBTeamId: match.side_b_team_id || undefined
+      },
+      course: course && {
+        id: course.id,
+        name: course.name,
+        cr: course.cr,
+        slope: course.slope,
+        pars: course.pars,
+        strokeIndex: course.stroke_index
+      }
     });
   } catch (e: any) {
-    return bad(e.message, 500);
+    console.error(e);
+    return bad(e.message || 'match failed', 500);
   }
 };
