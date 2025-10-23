@@ -17,11 +17,45 @@ async function resolveHcpColumn(pool: Pool): Promise<'hcp' | 'hi' | 'handicap'> 
 }
 
 async function resolveSiColumn(pool: Pool): Promise<'stroke_index' | 'si' | 'strokeindex'> {
-  const { rows } = await pool.query(
-    `select column_name from information_schema.columns
-     where table_name = 'courses' and column_name in ('stroke_index','si','strokeindex')`
-  );
-  if (rows.length > 0) return rows[0].column_name;
+  // Сделаем миграцию: если есть 'si' или 'strokeindex', приведём её к 'stroke_index'
+  try {
+    const { rows } = await pool.query(`
+      select column_name
+        from information_schema.columns
+       where table_name = 'courses'
+         and column_name in ('stroke_index','si','strokeindex')
+    `);
+    const cols = rows.map((r: any) => r.column_name);
+
+    if (cols.includes('si') && !cols.includes('stroke_index')) {
+      // переименовать si -> stroke_index
+      await pool.query(`alter table courses rename column si to stroke_index`);
+      return 'stroke_index';
+    } else if (cols.includes('strokeindex') && !cols.includes('stroke_index')) {
+      // переименовать strokeindex -> stroke_index
+      await pool.query(`alter table courses rename column strokeindex to stroke_index`);
+      return 'stroke_index';
+    } else if (cols.includes('si') && cols.includes('stroke_index')) {
+      // если есть обе — скопируем значения и удалим si
+      await pool.query(`update courses set stroke_index = si where stroke_index is null and si is not null`);
+      await pool.query(`alter table courses drop column if exists si`);
+      return 'stroke_index';
+    } else if (cols.includes('strokeindex') && cols.includes('stroke_index')) {
+      await pool.query(`update courses set stroke_index = strokeindex where stroke_index is null and strokeindex is not null`);
+      await pool.query(`alter table courses drop column if exists strokeindex`);
+      return 'stroke_index';
+    } else if (cols.includes('stroke_index')) {
+      return 'stroke_index';
+    } else if (cols.includes('si')) {
+      return 'si';
+    } else if (cols.includes('strokeindex')) {
+      return 'strokeindex';
+    }
+  } catch (e) {
+    console.error('resolveSiColumn migration error:', e);
+  }
+
+  // Если ничего не найдено — добавить стандартную колонку stroke_index
   await pool.query(`alter table courses add column if not exists stroke_index int[]`);
   return 'stroke_index';
 }
@@ -67,26 +101,36 @@ export const handler: Handler = async () => {
     const hcpCol = await resolveHcpColumn(pool);
     const players = (await pool.query(
       `select id, name, ${hcpCol} as hcp from players order by name`
-    )).rows;
+    )).rows.map((p:any) => ({
+      id: p.id,
+      name: p.name,
+      hcp: p.hcp ?? null
+    }));
 
     // teams
-    const tCol = await resolveTeamPlayersCol(pool);
-    const teamsRaw = (await pool.query(
-      `select id, name, ${tCol} as player_ids from teams order by name`
-    )).rows;
-    const teams = teamsRaw.map((t: any) => ({ id: t.id, name: t.name, playerIds: t.player_ids || [] }));
+    const teamPlayersCol = await resolveTeamPlayersCol(pool);
+    const teams = (await pool.query(
+      `select id, name, ${teamPlayersCol} as player_ids from teams order by name`
+    )).rows.map((t:any) => ({ id: t.id, name: t.name, playerIds: t.player_ids || [] }));
 
-    // courses
+    // courses — гарантируем stroke_index и читаем с учётом имени колонки
     const siCol = await resolveSiColumn(pool);
+    console.error('DEBUG bootstrap: using si column =', siCol);
     const courses = (await pool.query(
-      `select id, name, cr, slope, pars, ${siCol} as stroke_index from courses order by name`
-    )).rows.map((r: any) => ({
-      id: r.id,
-      name: r.name,
-      cr: r.cr,
-      slope: r.slope,
-      pars: r.pars,
-      strokeIndex: r.stroke_index || null,
+      `select id, name, cr, slope, pars,
+         (case
+           when exists(select 1 from information_schema.columns where table_name='courses' and column_name='stroke_index') then stroke_index
+           when exists(select 1 from information_schema.columns where table_name='courses' and column_name='si') then si
+           when exists(select 1 from information_schema.columns where table_name='courses' and column_name='strokeindex') then strokeindex
+           else null end) as stroke_index
+       from courses order by name`
+    )).rows.map((c:any) => ({
+      id: c.id,
+      name: c.name,
+      cr: c.cr ?? null,
+      slope: c.slope ?? null,
+      pars: c.pars || [],
+      strokeIndex: c.stroke_index || []
     }));
 
     // matches — гарантируем базовую схему и читаем с учётом имени колонки дня
@@ -112,7 +156,7 @@ export const handler: Handler = async () => {
 
     return ok({ players, teams, courses, matches });
   } catch (e: any) {
-    console.error(e);
+    console.error('bootstrap error:', e);
     return bad(e.message || 'bootstrap failed', 500);
   }
 };
