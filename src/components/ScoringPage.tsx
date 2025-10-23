@@ -1,24 +1,24 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Course, Match, MatchSide, Player, Team } from '../types';
 
-/* ----------------- helpers ----------------- */
+/* ----------------- constants & helpers ----------------- */
 
 const ALLOWANCE_SINGLES = 0.75;
 const ALLOWANCE_FOURBALL = 0.75;
 
 function safePars(course: Course): number[] {
   const p = Array.isArray(course.pars) ? course.pars : [];
-  if (p.length === 18) return p as number[];
+  if (p.length === 18) return p;
   return [4,4,3,5,4,4,5,3,4, 4,5,3,4,4,5,3,4,4];
 }
 function safeSI(course: Course): (number|null)[] {
   const si = Array.isArray(course.strokeIndex) ? course.strokeIndex : [];
-  if (si.length === 18) return si as number[];
+  if (si.length === 18) return si;
   return Array(18).fill(null);
 }
 function coursePar(course: Course) { return safePars(course).reduce((a,b)=>a+b,0); }
 function toCourseHandicap(hi: number | undefined, course: Course) {
-  if (!hi && hi !== 0) return 0;
+  if (hi == null) return 0;
   const slope = course.slope ?? 113;
   const cr = course.cr ?? coursePar(course);
   const par = coursePar(course);
@@ -62,7 +62,8 @@ function totalPoints(winners: (HoleRes|null)[]) {
 function starsFor(shots:number){ return shots>=2?'**': shots===1?'*':''; }
 function labelUpDn(n:number){ if(n===0) return 'AS'; return n>0?`${n}UP`:`${Math.abs(n)}DN`; }
 
-/* ----------------- ui atoms ----------------- */
+/* ----------------- small UI atoms ----------------- */
+
 function HoleChip({ value, active, faint, star, color }:{
   value: number|string|null|undefined; active?:boolean; faint?:boolean; star?:''|'*'|'**'; color?:'red'|'blue'|'gray';
 }) {
@@ -77,7 +78,15 @@ function HoleChip({ value, active, faint, star, color }:{
 }
 function BarLabel({children}:{children:React.ReactNode}){ return <div className="px-4 py-1 rounded-2xl border text-xs md:text-sm font-semibold">{children}</div>; }
 
+/* ----------------- types for draft ----------------- */
+
+type Draft = {
+  A: { team: number|null| -1; players: Record<string, number|null| -1> };
+  B: { team: number|null| -1; players: Record<string, number|null| -1> };
+};
+
 /* ----------------- main component ----------------- */
+
 type PerHoleMeta = {
   a:{gross?:number|null; net?:number|null; star?:''|'*'|'**';};
   b:{gross?:number|null; net?:number|null; star?:''|'*'|'**';};
@@ -98,23 +107,22 @@ export default function ScoringPage({
 
   const aName = useMemo(()=>sideName(match.sideA, players, teams),[match,players,teams]);
   const bName = useMemo(()=>sideName(match.sideB, players, teams),[match,players,teams]);
+  const aPlayerIds = expandSide(match.sideA, teams);
+  const bPlayerIds = expandSide(match.sideB, teams);
 
-  // вычисления на 18 лунок
+  /* ---------- DERIVED: per-hole winners for view ---------- */
   const metas: PerHoleMeta[] = useMemo(()=>{
     const arr: PerHoleMeta[] = [];
-    const aPlayerIds = expandSide(match.sideA, teams);
-    const bPlayerIds = expandSide(match.sideB, teams);
-    const allowA = match.format==='singles'?ALLOWANCE_SINGLES:ALLOWANCE_FOURBALL;
-    const allowB = allowA;
+    const allow = match.format==='singles'?ALLOWANCE_SINGLES:ALLOWANCE_FOURBALL;
 
     const playerGross = (side:'A'|'B', hIdx:number)=>{
       const store = side==='A'? match.playerScoresA : match.playerScoresB;
       if (!store) return [] as Array<{playerId:string; gross:number|null|undefined; dash?:boolean;}>;
-      return Object.entries(store).map(([pid,arr])=>({
-        playerId: pid, gross: Array.isArray(arr)? arr[hIdx] ?? null : null, dash: Array.isArray(arr) && arr[hIdx]===-1
+      return Object.entries(store).map(([pid,a])=>({
+        playerId: pid, gross: Array.isArray(a)? a[hIdx] ?? null : null, dash: Array.isArray(a) && a[hIdx]===-1
       }));
     };
-    const pNet = (pid:string, gross:number|null|undefined, allow:number, hIdx:number)=>{
+    const pNet = (pid:string, gross:number|null|undefined, hIdx:number)=>{
       const hi = players.find(p=>p.id===pid)?.hcp ?? 0;
       const ch = Math.round(toCourseHandicap(hi, course) * allow);
       if (gross==null) return null;
@@ -124,12 +132,11 @@ export default function ScoringPage({
     };
 
     for(let i=0;i<18;i++){
-      // A
       const rowA = playerGross('A', i);
       const candsA: Array<{net:number;star:''|'*'|'**'}> = [];
       if (rowA.length){
         for(const r of rowA){
-          const v = pNet(r.playerId, r.gross, allowA, i);
+          const v = pNet(r.playerId, r.gross, i);
           if (!v) continue;
           if ('dash' in v) { if (match.format==='singles') candsA.push({net: Number.POSITIVE_INFINITY, star:''}); continue; }
           candsA.push({net:v.net, star:v.star});
@@ -138,12 +145,11 @@ export default function ScoringPage({
         const teamGross = (match.scoresA||[])[i];
         if (teamGross!=null) candsA.push({net: teamGross, star: ''});
       }
-      // B
       const rowB = playerGross('B', i);
       const candsB: Array<{net:number;star:''|'*'|'**'}> = [];
       if (rowB.length){
         for(const r of rowB){
-          const v = pNet(r.playerId, r.gross, allowB, i);
+          const v = pNet(r.playerId, r.gross, i);
           if (!v) continue;
           if ('dash' in v) { if (match.format==='singles') candsB.push({net: Number.POSITIVE_INFINITY, star:''}); continue; }
           candsB.push({net:v.net, star:v.star});
@@ -179,15 +185,61 @@ export default function ScoringPage({
   const upBack  = winners.slice(9).reduce((acc,r)=> r==='A'?acc+1: r==='B'?acc-1: acc, 0);
   const upTot = upFront + upBack;
   const pts = totalPoints(winners);
-
   const started = metas.some(m=>m.a.net!=null || m.b.net!=null);
   const finished = metas.every(m=>m.a.net!=null || m.b.net!=null);
 
-  const aPlayerIds = expandSide(match.sideA, teams);
-  const bPlayerIds = expandSide(match.sideB, teams);
-  const perPlayerEntry = match.format==='fourball' && (aPlayerIds.length>2 || bPlayerIds.length>2);
+  /* ---------- DRAFT for inputs ---------- */
 
-  /* ---------- VIEW ---------- */
+  const initialDraft = (): Draft => {
+    const hi = hole - 1;
+    const d: Draft = { A: { team: null, players: {} }, B: { team: null, players: {} } };
+    d.A.team = (match.scoresA || [])[hi] ?? null;
+    d.B.team = (match.scoresB || [])[hi] ?? null;
+    for (const pid of aPlayerIds) d.A.players[pid] = (match.playerScoresA?.[pid] ?? [])[hi] ?? null;
+    for (const pid of bPlayerIds) d.B.players[pid] = (match.playerScoresB?.[pid] ?? [])[hi] ?? null;
+    return d;
+  };
+
+  const [draft, setDraft] = useState<Draft>(initialDraft);
+  useEffect(()=>{ setDraft(initialDraft()); }, [hole, match.id]);
+
+  // сравнить черновик с исходником для текущей лунки и отправить только изменения
+  const persistCurrentHole = async () => {
+    if (!onScore || readOnly) return;
+    const hi = hole - 1;
+    const calls: Array<Promise<any>|void> = [];
+
+    // team values
+    const origATeam = (match.scoresA || [])[hi] ?? null;
+    const origBTeam = (match.scoresB || [])[hi] ?? null;
+    if (draft.A.team !== origATeam) {
+      calls.push(onScore({ side:'A', hole, playerId:null, gross: draft.A.team === -1 ? -1 : draft.A.team, dash: draft.A.team === -1 }) as any);
+    }
+    if (draft.B.team !== origBTeam) {
+      calls.push(onScore({ side:'B', hole, playerId:null, gross: draft.B.team === -1 ? -1 : draft.B.team, dash: draft.B.team === -1 }) as any);
+    }
+
+    // per-player values
+    for (const pid of aPlayerIds) {
+      const orig = (match.playerScoresA?.[pid] ?? [])[hi] ?? null;
+      const val = draft.A.players[pid] ?? null;
+      if (val !== orig) {
+        calls.push(onScore({ side:'A', hole, playerId:pid, gross: val === -1 ? -1 : val, dash: val === -1 }) as any);
+      }
+    }
+    for (const pid of bPlayerIds) {
+      const orig = (match.playerScoresB?.[pid] ?? [])[hi] ?? null;
+      const val = draft.B.players[pid] ?? null;
+      if (val !== orig) {
+        calls.push(onScore({ side:'B', hole, playerId:pid, gross: val === -1 ? -1 : val, dash: val === -1 }) as any);
+      }
+    }
+
+    if (calls.length) await Promise.all(calls);
+  };
+
+  /* ---------- VIEW (readOnly) ---------- */
+
   if (readOnly){
     return (
       <div className="bg-white rounded-2xl p-3 md:p-6 shadow">
@@ -199,6 +251,7 @@ export default function ScoringPage({
           </div>
           <div className="flex-1 text-right"><div className="text-sm md:text-base font-semibold">{bName}</div></div>
         </div>
+
         <div className="grid grid-cols-[1fr_auto_1fr] gap-2 md:gap-4 items-center">
           <div className="flex flex-wrap gap-1 md:gap-2 justify-start">
             {metas.map((m,i)=>(
@@ -210,7 +263,7 @@ export default function ScoringPage({
             <div className="text-xs md:text-sm font-semibold mt-2">IN</div><BarLabel>{labelUpDn(upBack)}</BarLabel>
             <div className="text-xs md:text-sm font-semibold mt-2">TOT</div><BarLabel>{labelUpDn(upTot)}</BarLabel>
             <div className="mt-4 flex flex-wrap gap-1 md:gap-2 justify-center">
-              {pars.map((p,i)=>(<HoleChip key={i} value={p} color="gray"/>))}
+              {safePars(course).map((p,i)=>(<HoleChip key={i} value={p} color="gray"/>))}
             </div>
           </div>
           <div className="flex flex-wrap gap-1 md:gap-2 justify-end">
@@ -223,44 +276,81 @@ export default function ScoringPage({
     );
   }
 
-  /* ---------- INPUT ---------- */
-  const [side,setSide]=useState<'A'|'B'>('A');
-  const par = pars[hole-1]; const si = siArr[hole-1];
+  /* ---------- INPUT (edit) ---------- */
 
+  const [side,setSide]=useState<'A'|'B'>('A');
+  const par = safePars(course)[hole-1]; const si = safeSI(course)[hole-1];
+
+  const perPlayerEntry = match.format==='fourball' && (aPlayerIds.length>2 || bPlayerIds.length>2);
   const perSidePlayers = side==='A'? aPlayerIds : bPlayerIds;
   const focusOnly = focusPlayerId && perSidePlayers.includes(focusPlayerId);
-  const submit=(payload:{playerId?:string|null; gross?:number|null; dash?:boolean})=>{
-    if(!onScore) return;
-    onScore({ side, hole, ...payload });
-  };
 
-  const cell=(pid:string)=>{
-    const store = side==='A'? match.playerScoresA : match.playerScoresB;
-    const arr = store?.[pid] ?? [];
-    const v = Array.isArray(arr) ? arr[hole-1] ?? null : null;
-    const dash = v===-1;
+  const updateTeam = (s:'A'|'B', v:number|null| -1) => setDraft(prev => ({ ...prev, [s]: { ...prev[s], team: v } }));
+  const updatePlayer = (s:'A'|'B', pid:string, v:number|null| -1) =>
+    setDraft(prev => ({ ...prev, [s]: { ...prev[s], players: { ...prev[s].players, [pid]: v } } }));
+
+  const PlayerRow = (pid:string) => {
     const label = players.find(p=>p.id===pid)?.name ?? 'Игрок';
-
     const hi = players.find(p=>p.id===pid)?.hcp ?? 0;
     const ch = Math.round(toCourseHandicap(hi, course) * (match.format==='singles'?ALLOWANCE_SINGLES:ALLOWANCE_FOURBALL));
     const shots = shotsOnHole(ch, hole-1, siArr as any);
     const star = starsFor(shots);
+    const v = (draft[side].players[pid] ?? null);
+    const show = v === -1 ? '' : (v ?? '');
 
     return (
       <div key={pid} className="bg-white rounded-xl p-3 shadow flex items-center gap-2">
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <div className="text-sm font-medium truncate">{label}</div>
           <div className="text-xs text-gray-500">Par {par} • SI {si ?? '—'} {star && <span className="ml-1">({star})</span>}</div>
         </div>
-        <button className="px-2 py-1 rounded-l-lg border" onClick={()=>submit({playerId:pid, gross: Math.max(1, (typeof v==='number' && v>0 ? v : 1)-1), dash:false})}>−</button>
-        <input className="w-14 text-center border-y" inputMode="numeric"
-          value={dash?'':(v ?? '')} placeholder="-"
-          onChange={e=>{ const t=e.target.value.trim(); if(t==='') submit({playerId:pid, gross:null, dash:false}); else submit({playerId:pid, gross:parseInt(t,10), dash:false}); }}
+        <button className="px-2 py-1 rounded-l-lg border" onClick={()=>updatePlayer(side,pid, Math.max(1, (typeof v==='number' && v>0 ? v : 1)-1))}>−</button>
+        <input className="w-14 text-center border-y"
+          inputMode="numeric"
+          value={show as any}
+          placeholder="-"
+          onChange={(e)=>{
+            const t = e.target.value.trim();
+            updatePlayer(side,pid, t===''? null : Number.isNaN(parseInt(t,10)) ? null : parseInt(t,10));
+          }}
         />
-        <button className="px-2 py-1 rounded-r-lg border" onClick={()=>submit({playerId:pid, gross: (typeof v==='number' && v>0 ? v : 0)+1, dash:false})}>+</button>
-        <button className={`ml-2 px-2 py-1 rounded-lg border ${dash?'bg-gray-200':''}`} title="Прочерк" onClick={()=>submit({playerId:pid, gross:-1, dash:true})}>—</button>
+        <button className="px-2 py-1 rounded-r-lg border" onClick={()=>updatePlayer(side,pid, (typeof v==='number' && v>0 ? v : 0)+1)}>+</button>
+        <button className={`ml-2 px-2 py-1 rounded-lg border ${v===-1?'bg-gray-200':''}`} title="Прочерк" onClick={()=>updatePlayer(side,pid, -1)}>—</button>
       </div>
     );
+  };
+
+  const TeamBox = (s:'A'|'B') => {
+    const label = s==='A'? aName||'Сторона A' : bName||'Сторона B';
+    const v = draft[s].team;
+    const show = v === -1 ? '' : (v ?? '');
+    return (
+      <div className="p-3 rounded-xl border">
+        <div className="text-sm font-medium mb-1">{label}</div>
+        <div className="flex items-center gap-2 justify-center">
+          <button className="px-2 py-1 rounded-l-lg border" onClick={()=>updateTeam(s, Math.max(1, (typeof v==='number' && v>0 ? v : 1)-1))}>−</button>
+          <input className="w-20 text-center border-y text-xl" inputMode="numeric"
+            value={show as any}
+            onChange={(e)=>{
+              const t = e.target.value.trim();
+              updateTeam(s, t===''? null : Number.isNaN(parseInt(t,10)) ? null : parseInt(t,10));
+            }}
+          />
+          <button className="px-2 py-1 rounded-r-lg border" onClick={()=>updateTeam(s, (typeof v==='number' && v>0 ? v : 0)+1)}>+</button>
+          <button className={`ml-2 px-2 py-1 rounded-lg border ${v===-1?'bg-gray-200':''}`} onClick={()=>updateTeam(s, -1)}>—</button>
+        </div>
+      </div>
+    );
+  };
+
+  // навигация со сохранением
+  const goPrev = async () => {
+    await persistCurrentHole();
+    setHole(h => Math.max(1, h-1));
+  };
+  const goNext = async () => {
+    await persistCurrentHole();
+    setHole(h => Math.min(18, h+1));
   };
 
   return (
@@ -269,50 +359,53 @@ export default function ScoringPage({
         <div className="font-semibold">{match.name} — {course.name}</div>
       </div>
 
+      {/* навигация по лункам (сохранение на клике) */}
       <div className="flex items-center justify-between mb-3">
-        <button className="px-3 py-2 rounded border" onClick={()=>setHole(h=>Math.max(1,h-1))} disabled={hole===1}>Назад</button>
+        <button className="px-3 py-2 rounded border" onClick={goPrev} disabled={hole===1}>Назад</button>
         <div className="text-center">
           <div className="text-xs text-gray-500">Лунка</div>
           <div className="text-2xl font-bold">{hole}</div>
-          <div className="text-xs text-gray-500">Par {par} • SI {si ?? '—'}</div>
+          <div className="text-xs text-gray-500">Par {safePars(course)[hole-1]} • SI {safeSI(course)[hole-1] ?? '—'}</div>
         </div>
-        <button className="px-3 py-2 rounded border" onClick={()=>setHole(h=>Math.min(18,h+1))} disabled={hole===18}>Далее</button>
+        <button className="px-3 py-2 rounded border" onClick={goNext} disabled={hole===18}>Далее</button>
       </div>
 
+      {/* выбор стороны */}
       <div className="flex items-center justify-center gap-2 mb-3">
         <button className={`px-3 py-2 rounded border ${side==='A'?'bg-red-50 border-red-400':''}`} onClick={()=>setSide('A')}>{aName||'Сторона A'}</button>
         <button className={`px-3 py-2 rounded border ${side==='B'?'bg-blue-50 border-blue-400':''}`} onClick={()=>setSide('B')}>{bName||'Сторона B'}</button>
       </div>
 
+      {/* режим ввода */}
       { (match.format==='fourball' && (aPlayerIds.length>2 || bPlayerIds.length>2)) ? (
-        <div className="grid gap-2">{(focusOnly ? [focusPlayerId!] : perSidePlayers).map(pid=>cell(pid))}</div>
+        <div className="grid gap-2">
+          {((focusPlayerId && (side==='A'?aPlayerIds:bPlayerIds).includes(focusPlayerId)) ? [focusPlayerId] : (side==='A'? aPlayerIds : bPlayerIds)).map(pid => PlayerRow(pid))}
+        </div>
       ) : (
         <div className="grid grid-cols-2 gap-3">
-          {(['A','B'] as const).map(s=>{
-            const label = s==='A'? aName||'Сторона A' : bName||'Сторона B';
-            const val = (s==='A'? match.scoresA:match.scoresB)?.[hole-1] ?? null;
-            const set=(gross:number|null, dash=false)=> onScore && onScore({side:s, hole, playerId:null, gross, dash});
-            return (
-              <div key={s} className="p-3 rounded-xl border">
-                <div className="text-sm font-medium mb-1">{label}</div>
-                <div className="flex items-center gap-2 justify-center">
-                  <button className="px-2 py-1 rounded-l-lg border" onClick={()=>set(Math.max(1, (val ?? 1)-1))}>−</button>
-                  <input className="w-20 text-center border-y text-xl" inputMode="numeric"
-                    value={val ?? ''} onChange={e=>{ const t=e.target.value.trim(); if(t==='') set(null); else set(parseInt(t,10)); }}/>
-                  <button className="px-2 py-1 rounded-r-lg border" onClick={()=>set((val ?? 0)+1)}>+</button>
-                  <button className={`ml-2 px-2 py-1 rounded-lg border ${val===-1?'bg-gray-200':''}`} onClick={()=>set(-1,true)}>—</button>
-                </div>
-              </div>
-            );
-          })}
+          {TeamBox('A')}
+          {TeamBox('B')}
         </div>
       )}
 
-      <div className="mt-4 flex items-center justify-between">
-        <div className="text-xs text-gray-500">Матч-плей:</div>
-        <div className="flex gap-1">
+      {/* индикаторы и par центр */}
+      <div className="mt-5 grid grid-cols-[1fr_auto_1fr] gap-2 md:gap-4 items-center">
+        <div className="flex flex-wrap gap-1 md:gap-2 justify-start">
           {metas.map((m,i)=>(
-            <HoleChip key={i} value={i+1} active={i+1===hole} faint={m.winner==null} color={m.winner==='A'?'red': m.winner==='B'?'blue':'gray'}/>
+            <HoleChip key={i} value={m.a.net ?? m.a.gross} active={m.winner==='A'} faint={m.a.net==null && m.a.gross==null} star={m.a.star} color="red"/>
+          ))}
+        </div>
+        <div className="flex flex-col items-center gap-2">
+          <div className="text-xs md:text-sm font-semibold">OUT</div><BarLabel>{labelUpDn(upFront)}</BarLabel>
+          <div className="text-xs md:text-sm font-semibold mt-2">IN</div><BarLabel>{labelUpDn(upBack)}</BarLabel>
+          <div className="text-xs md:text-sm font-semibold mt-2">TOT</div><BarLabel>{labelUpDn(upTot)}</BarLabel>
+          <div className="mt-4 flex flex-wrap gap-1 md:gap-2 justify-center">
+            {safePars(course).map((p,i)=>(<HoleChip key={i} value={p} color="gray"/>))}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1 md:gap-2 justify-end">
+          {metas.map((m,i)=>(
+            <HoleChip key={i} value={m.b.net ?? m.b.gross} active={m.winner==='B'} faint={m.b.net==null && m.b.gross==null} star={m.b.star} color="blue"/>
           ))}
         </div>
       </div>
