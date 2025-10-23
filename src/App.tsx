@@ -104,9 +104,6 @@ export default function App() {
     }
   }, [parsed.mode, parsed.matchId]);
 
-  // ------ admin tab state (ВНЕ условных блоков!) ------
-  const [tab, setTab] = useState<'players' | 'teams' | 'courses' | 'matches'>('matches');
-
   // ------ top bar ------
   const TopBar = (
     <div className="w-full bg-white border-b">
@@ -200,32 +197,8 @@ export default function App() {
       <>
         {TopBar}
         <div className="max-w-6xl mx-auto p-4">
-          <div className="card" style={{ marginBottom: 12 }}>
-            <div className="content" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button className={`btn ${tab === 'players' ? 'primary' : ''}`} onClick={() => setTab('players')}>Players</button>
-              <button className={`btn ${tab === 'teams' ? 'primary' : ''}`} onClick={() => setTab('teams')}>Teams</button>
-              <button className={`btn ${tab === 'courses' ? 'primary' : ''}`} onClick={() => setTab('courses')}>Courses</button>
-              <button className={`btn ${tab === 'matches' ? 'primary' : ''}`} onClick={() => setTab('matches')}>Matches</button>
-              <button className="btn" onClick={() => loadAll()}>↻ Обновить</button>
-            </div>
-          </div>
-
-          {tab === 'players' && <Admin.Players players={players} />}
-          {tab === 'teams' && <Admin.Teams players={players} teams={teams} />}
-          {tab === 'courses' && <Admin.Courses courses={courses} />}
-          {tab === 'matches' && (
-            <Admin.Matches
-              isAdmin={true}
-              viewMode="edit"
-              players={players}
-              teams={teams}
-              courses={courses}
-              matches={matches}
-              setMatches={setMatches}
-              onCreate={async (m) => { await apiCreateMatch(m); await loadAll(); }}
-              onDelete={async (id) => { await apiDeleteMatch(id); await loadAll(); }}
-            />
-          )}
+          {/* Админка полностью внутри компонента Admin */}
+          <Admin />
         </div>
       </>
     );
