@@ -1,38 +1,30 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Admin from './components/Admin';
 import PublicBoard from './components/PublicBoard';
-import ScoringPage from './components/ScoringPage';
+// ScoringPage не используется напрямую здесь — им занимается MatchPage
+// import ScoringPage from './components/ScoringPage';
 import { Course, Match, Player, Team } from './types';
-import { apiBootstrap, apiGetMatch, apiSubmitScore, apiCreateMatch, apiDeleteMatch } from './api';
+import { apiBootstrap } from './api';
 import MatchPage from './pages/MatchPage';
 
-// ...
-function useHashRoute(){
+// ------ simple hash router ------
+function useHashRoute() {
   const [hash, setHash] = React.useState(window.location.hash || '#/public');
-  React.useEffect(()=>{ const fn=()=>setHash(window.location.hash||'#/public'); window.addEventListener('hashchange',fn); return ()=>window.removeEventListener('hashchange',fn); },[]);
-  return hash.replace(/^#/,'') || '/public';
+  React.useEffect(() => {
+    const fn = () => setHash(window.location.hash || '#/public');
+    window.addEventListener('hashchange', fn);
+    return () => window.removeEventListener('hashchange', fn);
+  }, []);
+  return hash.replace(/^#/, '') || '/public';
 }
 
-
-
+// ------ auth helpers ------
 const ROLE_KEY = 'role';
 const getRole = () => localStorage.getItem(ROLE_KEY) || 'viewer';
 const setRole = (r: string) => localStorage.setItem(ROLE_KEY, r);
 
-type MatchViewState = {
-  mode: 'match' | 'view' | null;
-  matchId: string | null;
-  focusPlayerId?: string;
-};
-
 export default function App() {
   const route = useHashRoute();
-
-  if (route.startsWith('/match/')) {
-    const id = route.split('/')[2];                       // /match/<id>
-    const readOnly = new URLSearchParams(window.location.search).get('view') === 'public';
-    return <MatchPage matchId={id} readOnlyParam={readOnly} />;
-  }
 
   // ------ auth ------
   const [role, setRoleState] = useState<string>(getRole());
@@ -46,71 +38,28 @@ export default function App() {
   };
   const doLogout = () => { setRole('viewer'); setRoleState('viewer'); window.location.hash = '#/public'; };
 
-  // ------ bootstrap from API ------
+  // ------ bootstrap for public/admin pages ------
   const [players, setPlayers] = useState<Player[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
-  const loadAll = async () => {
-    const data = await apiBootstrap();
-    setPlayers(data.players);
-    setTeams(data.teams as any);
-    setCourses(data.courses);
-    setMatches(data.matches);
-    setHydrated(true);
-  };
-  useEffect(() => { loadAll().catch(console.error); }, []);
-
-  // ------ parsed route ------
-  const parsed: MatchViewState = useMemo(() => {
-    if (route.startsWith('/match/')) {
-      const parts = route.split('/');
-      // /match/:id[/player/:playerId]
-      const matchId = parts[2] || null;
-      const focusPlayerId = parts[3] === 'player' ? parts[4] : undefined;
-      return { mode: 'match', matchId, focusPlayerId };
-    }
-    if (route.startsWith('/view/')) {
-      const parts = route.split('/');
-      const matchId = parts[2] || null;
-      return { mode: 'view', matchId };
-    }
-    return { mode: null, matchId: null };
-  }, [route]);
-
-  // ------ match detail state (used both for /match and /view) ------
-  const [matchDetail, setMatchDetail] = useState<{ match: Match; course: Course } | null>(null);
-  const [pollTimer, setPollTimer] = useState<number | null>(null);
-
   useEffect(() => {
-    // clear previous polling
-    if (pollTimer) { clearInterval(pollTimer); setPollTimer(null); }
+    (async () => {
+      try {
+        const data = await apiBootstrap();
+        setPlayers(data.players || []);
+        setTeams((data.teams as any) || []);
+        setCourses(data.courses || []);
+        setMatches(data.matches || []);
+      } finally {
+        setHydrated(true);
+      }
+    })();
+  }, []);
 
-    if ((parsed.mode === 'match' || parsed.mode === 'view') && parsed.matchId) {
-      apiGetMatch(parsed.matchId)
-        .then(setMatchDetail)
-        .catch(err => {
-          console.error(err);
-          setMatchDetail(null);
-        });
-
-      // lightweight polling for LIVE updates
-      const t = window.setInterval(() => {
-        apiGetMatch(parsed.matchId!)
-          .then(setMatchDetail)
-          .catch(() => {});
-      }, parsed.mode === 'match' ? 4000 : 5000);
-      setPollTimer(t as unknown as number);
-
-      return () => { clearInterval(t); };
-    } else {
-      setMatchDetail(null);
-    }
-  }, [parsed.mode, parsed.matchId]);
-
-  // ------ top bar ------
+  // ------ UI bits ------
   const TopBar = (
     <div className="w-full bg-white border-b">
       <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between">
@@ -133,7 +82,8 @@ export default function App() {
     </>
   );
 
-  // ------ routes rendering (никаких хуков внутри) ------
+  // ------ routes (все компоненты — только через JSX!) ------
+
   // /login
   if (route.startsWith('/login')) {
     return (
@@ -151,44 +101,27 @@ export default function App() {
     );
   }
 
-  // /match/:id[/player/:pid]  (data entry)
-  if (parsed.mode === 'match') {
-    if (!hydrated || !matchDetail) return Loading;
+  // /match/:id  — страница ввода (редактируемая)
+  if (route.startsWith('/match/')) {
+    const id = route.split('/')[2]; // /match/<id>
     return (
       <>
         {TopBar}
-        <div className="max-w-4xl mx-auto p-3">
-          <ScoringPage
-            match={matchDetail.match}
-            course={matchDetail.course}
-            players={players}
-            teams={teams}
-            readOnly={false}
-            focusPlayerId={parsed.focusPlayerId}
-            onScore={(payload) =>
-              apiSubmitScore({ matchId: matchDetail.match.id, ...payload })
-                .then(() => apiGetMatch(matchDetail.match.id).then(setMatchDetail))
-            }
-          />
+        <div className="max-w-5xl mx-auto p-3 md:p-6">
+          <MatchPage matchId={id} readOnlyParam={false} />
         </div>
       </>
     );
   }
 
-  // /view/:id  (read-only view)
-  if (parsed.mode === 'view') {
-    if (!hydrated || !matchDetail) return Loading;
+  // /view/:id  — публичный просмотр (read-only)
+  if (route.startsWith('/view/')) {
+    const id = route.split('/')[2]; // /view/<id>
     return (
       <>
         {TopBar}
-        <div className="max-w-4xl mx-auto p-3">
-          <ScoringPage
-            match={matchDetail.match}
-            course={matchDetail.course}
-            players={players}
-            teams={teams}
-            readOnly={true}
-          />
+        <div className="max-w-5xl mx-auto p-3 md:p-6">
+          <MatchPage matchId={id} readOnlyParam={true} />
         </div>
       </>
     );
@@ -198,19 +131,17 @@ export default function App() {
   if (route.startsWith('/admin')) {
     if (!hydrated) return Loading;
     if (!isAdmin) { window.location.hash = '#/login'; return null; }
-
     return (
       <>
         {TopBar}
         <div className="max-w-6xl mx-auto p-4">
-          {/* Админка полностью внутри компонента Admin */}
           <Admin />
         </div>
       </>
     );
   }
 
-  // /public
+  // /public (главная публичная доска)
   return (
     <>
       {TopBar}
