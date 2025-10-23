@@ -7,11 +7,13 @@ import { ensureMatchesSchema } from './_shared/schema';
 type Payload = {
   id: string;
   name: string;
-  day: string;
+  day?: string;           // допускаем разные ключи
+  dayLabel?: string;
+  match_day?: string;
   format: 'singles' | 'fourball';
   courseId: string;
-  sideATeamId?: string;
-  sideBTeamId?: string;
+  sideATeamId?: string | null;
+  sideBTeamId?: string | null;
   sideAPlayerIds: string[];
   sideBPlayerIds: string[];
 };
@@ -44,9 +46,10 @@ export const handler: Handler = async (event) => {
     try { requireAdmin(event); } catch { return bad('Unauthorized', 401); }
 
     const body = await readJson<Payload>(event.body);
-    const id = body.id;
+
+    const id = body.id?.trim();
     const name = (body.name || '').trim();
-    const rawDay = (body.day || '').trim();
+    const rawDay = (body.day ?? body.dayLabel ?? (body as any)?.day_label ?? body.match_day ?? '').toString().trim();
     const format = body.format;
     const courseId = body.courseId;
     const sideATeamId = body.sideATeamId ?? null;
@@ -54,14 +57,17 @@ export const handler: Handler = async (event) => {
 
     if (!id || !name || !format || !courseId) return bad('id, name, format, courseId are required');
 
-    // side_a / side_b
+    // side_a / side_b как JSONB-массив объектов {type:'player', id:'...'}
     const sideA = (body.sideAPlayerIds || []).map(pid => ({ type: 'player', id: pid }));
     const sideB = (body.sideBPlayerIds || []).map(pid => ({ type: 'player', id: pid }));
 
     const pool = getPool();
     await ensureMatchesSchema(pool);
-    const { col: dayCol, notNull } = await resolveDayCol(pool);
-    const dayValue: string | null = rawDay || (notNull ? 'Day' : null); // если NOT NULL — никогда не оставляем null
+
+    const { col: dayCol } = await resolveDayCol(pool);
+
+    // ЖЁСТКАЯ гарантия непустого значения дня:
+    const dayValue = rawDay || 'Day 1';
 
     const sql = `
       insert into matches (id, name, ${dayCol}, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id, created_at)
@@ -77,6 +83,7 @@ export const handler: Handler = async (event) => {
         side_b_team_id = excluded.side_b_team_id
       returning id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
     `;
+
     const { rows } = await pool.query(sql, [
       id, name, dayValue, format, courseId,
       JSON.stringify(sideA), JSON.stringify(sideB),
@@ -85,7 +92,7 @@ export const handler: Handler = async (event) => {
 
     return ok({ match: rows[0] });
   } catch (e: any) {
-    console.error(e);
+    console.error('match_create error:', e);
     return bad(e.message || 'match_create failed', 500);
   }
 };
