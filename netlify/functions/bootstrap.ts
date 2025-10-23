@@ -1,9 +1,9 @@
+// netlify/functions/bootstrap.ts
 import type { Handler } from '@netlify/functions';
 import type { Pool } from 'pg';
 import { getPool } from './_shared/db';
 import { ok, bad } from './_shared/http';
-
-/* ---- helpers: autodetect columns ---- */
+import { ensureMatchesSchema } from './_shared/schema';
 
 async function resolveHcpColumn(pool: Pool): Promise<'hcp' | 'hi' | 'handicap'> {
   const { rows } = await pool.query(
@@ -35,18 +35,6 @@ async function resolveTeamPlayersCol(pool: Pool): Promise<'player_ids' | 'player
   return 'player_ids';
 }
 
-async function resolveDayCol(pool: Pool): Promise<'day' | 'match_day' | 'day_label'> {
-  const { rows } = await pool.query(
-    `select column_name from information_schema.columns
-     where table_name = 'matches' and column_name in ('day','match_day','day_label')`
-  );
-  if (rows.length > 0) return rows[0].column_name;
-  await pool.query(`alter table matches add column if not exists day text`);
-  return 'day';
-}
-
-/* ---- handler ---- */
-
 export const handler: Handler = async () => {
   try {
     const pool = getPool();
@@ -77,12 +65,12 @@ export const handler: Handler = async () => {
       strokeIndex: r.stroke_index || null,
     }));
 
-    // matches
-    const dayCol = await resolveDayCol(pool);
+    // matches — гарантируем схему и читаем стандартные имена
+    await ensureMatchesSchema(pool);
     const matches = (await pool.query(
-      `select id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
-       from matches
-       order by created_at desc nulls last, name`
+      `select id, name, day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
+         from matches
+        order by created_at desc nulls last, name`
     )).rows.map((m: any) => ({
       id: m.id,
       name: m.name,
