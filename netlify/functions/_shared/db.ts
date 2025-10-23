@@ -18,8 +18,7 @@ export function getPool() {
 
   _pool = new Pool({
     connectionString: connStr,
-    // Neon требует SSL
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: false }, // Neon requires SSL
     max: 5,
   });
 

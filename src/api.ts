@@ -1,60 +1,77 @@
-// src/api.ts
-import { Course, Match, Player, Team } from './types';
+import { Course, Match, MatchFormat, Player, Team } from './types';
 
-const base = '/.netlify/functions';
+const base = '';
 
-export type BootstrapPayload = {
-  players: Player[];
-  teams: (Team & { playerIds: string[] })[];
-  courses: Course[];
-  matches: Match[];
-};
-
-export async function apiBootstrap(): Promise<BootstrapPayload> {
-  const r = await fetch(`${base}/bootstrap`, { credentials: 'omit' });
-  if (!r.ok) throw new Error('bootstrap failed');
-  return r.json();
-}
-
-export async function apiGetMatch(id: string): Promise<{ match: Match; course: Course }> {
-  const r = await fetch(`${base}/match?id=${encodeURIComponent(id)}`);
-  if (!r.ok) throw new Error('match not found');
-  return r.json();
-}
-
-export async function apiSubmitScore(input: {
-  matchId: string; side: 'A'|'B'; hole: number; playerId?: string|null; gross?: number|null; dash?: boolean;
-}) {
-  const r = await fetch(`${base}/score`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
-  });
-  if (!r.ok) {
-    const msg = await r.text();
-    throw new Error(`score failed: ${msg}`);
+async function json<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`HTTP ${res.status}: ${txt}`);
   }
-  return r.json();
+  return res.json();
+}
+
+export async function apiBootstrap() {
+  return json<{ players: Player[]; teams: Team[]; courses: Course[]; matches: Match[] }>(
+    await fetch(`${base}/.netlify/functions/bootstrap`, { method: 'GET' })
+  );
 }
 
 export async function apiCreateMatch(payload: {
-  id: string; name: string; day: string; format: 'singles'|'fourball'; courseId: string;
+  id: string; name: string; day: string; format: MatchFormat; courseId: string;
   sideATeamId?: string; sideBTeamId?: string; sideAPlayerIds: string[]; sideBPlayerIds: string[];
 }) {
-  const r = await fetch(`${base}/match_create`, {
+  return json(await fetch(`${base}/.netlify/functions/match_create`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-admin-token': '1' },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) throw new Error('create match failed');
-  return r.json();
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload)
+  }));
 }
 
 export async function apiDeleteMatch(id: string) {
-  const r = await fetch(`${base}/match_delete?id=${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    headers: { 'x-admin-token': '1' }
-  });
-  if (!r.ok) throw new Error('delete match failed');
-  return r.json();
+  return json(await fetch(`${base}/.netlify/functions/match_delete?id=${encodeURIComponent(id)}`, {
+    method: 'POST'
+  }));
+}
+
+export async function apiGetMatch(id: string) {
+  return json<{ match: Match; course: Course }>(
+    await fetch(`${base}/.netlify/functions/match?id=${encodeURIComponent(id)}`)
+  );
+}
+
+export async function apiSubmitScore(payload: {
+  matchId: string; side: 'A'|'B'; hole: number; playerId?: string | null; gross?: number | null; dash?: boolean;
+}) {
+  return json(await fetch(`${base}/.netlify/functions/score`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  }));
+}
+
+/* --------- НОВЫЕ: upsert для игроков/команд/полей --------- */
+
+export async function apiUpsertPlayer(p: { id?: string; name: string; hcp?: number }) {
+  return json(await fetch(`${base}/.netlify/functions/players_upsert`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(p),
+  }));
+}
+
+export async function apiUpsertTeam(t: { id?: string; name: string; playerIds: string[] }) {
+  return json(await fetch(`${base}/.netlify/functions/teams_upsert`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(t),
+  }));
+}
+
+export async function apiUpsertCourse(c: Course) {
+  // приведение поля strokeIndex к snake_case на сервере делается функцией
+  return json(await fetch(`${base}/.netlify/functions/courses_upsert`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(c),
+  }));
 }
