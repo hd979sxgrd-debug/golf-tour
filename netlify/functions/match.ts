@@ -1,8 +1,26 @@
-// netlify/functions/match.ts
 import type { Handler } from '@netlify/functions';
+import type { Pool } from 'pg';
 import { getPool } from './_shared/db';
 import { ok, bad } from './_shared/http';
 import { ensureMatchesSchema } from './_shared/schema';
+
+async function resolveDayCol(pool: Pool): Promise<'day' | 'match_day' | 'day_label'> {
+  const { rows } = await pool.query(
+    `select column_name
+       from information_schema.columns
+      where table_name = 'matches'
+        and column_name in ('day','match_day','day_label')
+      order by case column_name
+                 when 'day' then 1
+                 when 'match_day' then 2
+                 when 'day_label' then 3
+               end asc
+      limit 1`
+  );
+  if (rows.length > 0) return rows[0].column_name;
+  await pool.query(`alter table matches add column if not exists day text`);
+  return 'day';
+}
 
 export const handler: Handler = async (event) => {
   try {
@@ -12,15 +30,17 @@ export const handler: Handler = async (event) => {
     const pool = getPool();
     await ensureMatchesSchema(pool);
 
+    const dayCol = await resolveDayCol(pool);
+
     const mres = await pool.query(
-      `select id, name, day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
+      `select id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
          from matches where id = $1`,
       [id]
     );
     if (mres.rowCount === 0) return bad('match not found', 404);
     const m = mres.rows[0];
 
-    // курс: учитываем разные названия stroke_index
+    // курс со stroke_index-алиасами
     const cres = await pool.query(
       `select
          id, name, cr, slope, pars,
