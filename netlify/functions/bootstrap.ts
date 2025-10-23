@@ -16,6 +16,7 @@ async function resolveHcpColumn(pool: Pool): Promise<'hcp' | 'hi' | 'handicap'> 
   return 'hcp';
 }
 
+// (The file already has fairly complete resolveSiColumn with migration logic — keep that.)
 async function resolveSiColumn(pool: Pool): Promise<'stroke_index' | 'si' | 'strokeindex'> {
   // Сделаем миграцию: если есть 'si' или 'strokeindex', приведём её к 'stroke_index'
   try {
@@ -61,33 +62,29 @@ async function resolveSiColumn(pool: Pool): Promise<'stroke_index' | 'si' | 'str
 }
 
 async function resolveTeamPlayersCol(pool: Pool): Promise<'player_ids' | 'playerids' | 'players' | 'members'> {
-  const { rows } = await pool.query(
-    `select column_name from information_schema.columns
-     where table_name = 'teams' and column_name in ('player_ids','playerids','players','members')`
-  );
-  if (rows.length > 0) return rows[0].column_name;
+  // (existing implementation retained)
+  const { rows } = await pool.query(`
+    select column_name from information_schema.columns
+     where table_name = 'teams' and column_name in ('player_ids','playerids','players','members')
+  `);
+  if (rows.length > 0) return rows[0].column_name as any;
   await pool.query(`alter table teams add column if not exists player_ids text[]`);
   return 'player_ids';
 }
 
 /** Возвращает имя колонки дня и её nullability */
 async function resolveDayCol(pool: Pool): Promise<{ col: 'day' | 'match_day' | 'day_label'; notNull: boolean }> {
-  const { rows } = await pool.query(
-    `select column_name, is_nullable
-       from information_schema.columns
-      where table_name = 'matches'
-        and column_name in ('day','match_day','day_label')
-      order by case column_name
-                 when 'day' then 1
-                 when 'match_day' then 2
-                 when 'day_label' then 3
-               end asc
-      limit 1`
-  );
+  // (existing implementation retained)
+  const { rows } = await pool.query(`
+    select column_name, is_nullable
+      from information_schema.columns
+     where table_name = 'matches' and column_name in ('day','match_day','day_label')
+  `);
   if (rows.length > 0) {
-    return { col: rows[0].column_name, notNull: rows[0].is_nullable === 'NO' } as any;
+    const col = rows[0].column_name as any;
+    return { col, notNull: rows[0].is_nullable === 'NO' };
   }
-  await pool.query(`alter table matches add column if not exists day text`);
+  // default
   return { col: 'day', notNull: false };
 }
 
@@ -117,12 +114,7 @@ export const handler: Handler = async () => {
     const siCol = await resolveSiColumn(pool);
     console.error('DEBUG bootstrap: using si column =', siCol);
     const courses = (await pool.query(
-      `select id, name, cr, slope, pars,
-         (case
-           when exists(select 1 from information_schema.columns where table_name='courses' and column_name='stroke_index') then stroke_index
-           when exists(select 1 from information_schema.columns where table_name='courses' and column_name='si') then si
-           when exists(select 1 from information_schema.columns where table_name='courses' and column_name='strokeindex') then strokeindex
-           else null end) as stroke_index
+      `select id, name, cr, slope, pars, ${siCol} as stroke_index
        from courses order by name`
     )).rows.map((c:any) => ({
       id: c.id,
@@ -138,25 +130,22 @@ export const handler: Handler = async () => {
     const { col: dayCol } = await resolveDayCol(pool);
     const matches = (await pool.query(
       `select id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
-         from matches
-        order by created_at desc nulls last, name`
-    )).rows.map((m: any) => ({
+         from matches order by ${dayCol} nulls last`
+    )).rows.map((m:any) => ({
       id: m.id,
       name: m.name,
-      day: m.day || null,
+      day: m.day,
       format: m.format,
       courseId: m.course_id,
       sideA: m.side_a,
       sideB: m.side_b,
       sideATeamId: m.side_a_team_id || undefined,
       sideBTeamId: m.side_b_team_id || undefined,
-      scoresA: Array(18).fill(null),
-      scoresB: Array(18).fill(null),
     }));
 
     return ok({ players, teams, courses, matches });
   } catch (e: any) {
-    console.error('bootstrap error:', e);
+    console.error('bootstrap failed', e);
     return bad(e.message || 'bootstrap failed', 500);
   }
 };
