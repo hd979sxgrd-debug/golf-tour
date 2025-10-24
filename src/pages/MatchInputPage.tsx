@@ -138,7 +138,7 @@ export default function MatchInputPage({
     return d;
   };
   const [draft, setDraft] = useState<Draft>(buildDraft(hole));
-  useEffect(() => { setDraft(buildDraft(hole)); }, [hole, match, aIds.join(','), bIds.join(',')]);
+  useEffect(()=>{ setDraft(buildDraft(hole)); }, [hole, match]);
 
   const updateTeam = (s: 'A' | 'B', v: number | null | -1) =>
     setDraft((prev) => ({ ...prev, [s]: { ...prev[s], team: v } }));
