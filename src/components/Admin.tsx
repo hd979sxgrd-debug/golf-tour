@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Course, Match, MatchFormat, Player, Team } from '../types';
-import { uid, flattenPlayerIds, matchProgress } from '../utils';
+import { uid, flattenPlayerIds, matchProgress, normalizeMatches } from '../utils';
 import { QRCodeCanvas } from 'qrcode.react';
 import {
   apiCreateMatch,
@@ -348,7 +348,7 @@ function MatchesTab() {
     setPlayers(data.players);
     setTeams(data.teams);
     setCourses(data.courses);
-    setMatches(data.matches);
+    setMatches(normalizeMatches(data.matches));
     if (!courseId && data.courses[0]) setCourseId(data.courses[0].id);
   };
   useEffect(() => { reload().catch(console.error); }, []);
@@ -437,8 +437,10 @@ function MatchesTab() {
         const needsPersonal = (m.format === 'fourball') && (playerIdsA.length > 2 || playerIdsB.length > 2);
 
         const prog = matchProgress(
-          { ...m, scoresA: m.scoresA ?? Array(18).fill(null), scoresB: m.scoresB ?? Array(18).fill(null) } as any,
-          players, teams, course ?? { id:'', name:'', pars:[], strokeIndex:[] } as any
+          m,
+          players,
+          teams,
+          course ?? { id:'', name:'', pars:[], strokeIndex:[] }
         );
 
         return (

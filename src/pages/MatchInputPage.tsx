@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Course, Match, MatchSide, Player, Team } from "../types";
+import { normalizeMatch } from "../utils";
 
 /* ---------- helpers ---------- */
 const ALLOW_SINGLES = 0.75;
@@ -37,61 +38,6 @@ const expandSide = (side: MatchSide[], teams: Team[]) => {
 const nameOfSide = (side: MatchSide[], players: Player[], teams: Team[]) =>
   expandSide(side, teams).map(id => players.find(p=>p.id===id)?.name ?? "—").join(" & ");
 
-/** ===== универсальный нормализатор ответа матча ===== */
-function extractHoleTable(anyM: any): Array<any> {
-  // Явные ключи
-  if (Array.isArray(anyM.hole_scores)) return anyM.hole_scores;
-  if (Array.isArray(anyM.holeScores))  return anyM.holeScores;
-  if (Array.isArray(anyM.scores))      return anyM.scores;
-  if (Array.isArray(anyM.rows))        return anyM.rows;
-  // Поиск первого массива объектов с полями side+hole
-  for (const k of Object.keys(anyM)) {
-    const v = (anyM as any)[k];
-    if (Array.isArray(v) && v.length && typeof v[0] === 'object' && 'hole' in v[0] && 'side' in v[0]) {
-      return v as any[];
-    }
-  }
-  return [];
-}
-
-function normalizeMatchScores(m: Match): Match {
-  const anyM: any = m as any;
-  const table = extractHoleTable(anyM);
-
-  if (!table.length) return m;
-
-  const scoresA = Array(18).fill(null) as (number|null)[];
-  const scoresB = Array(18).fill(null) as (number|null)[];
-  const pA: Record<string,(number|null)[]> = {};
-  const pB: Record<string,(number|null)[]> = {};
-
-  for (const row of table) {
-    const side: 'A'|'B' = (row.side || '').toUpperCase() === 'B' ? 'B' : 'A';
-    const pid = (row.player_id ?? row.playerId ?? row.player_key ?? row.playerKey ?? null) as string|null;
-    const hole = Math.max(1, Math.min(18, parseInt(String(row.hole),10))) - 1;
-    const isDash = Boolean(row.dash);
-    const grossVal = row.gross ?? row.score;
-    const gross: number|null = isDash ? null : (grossVal==null ? null : parseInt(String(grossVal),10));
-
-    if (side === 'A') {
-      if (pid) {
-        if (!pA[pid]) pA[pid] = Array(18).fill(undefined) as any;
-        pA[pid][hole] = gross;
-      } else {
-        scoresA[hole] = gross;
-      }
-    } else {
-      if (pid) {
-        if (!pB[pid]) pB[pid] = Array(18).fill(undefined) as any;
-        pB[pid][hole] = gross;
-      } else {
-        scoresB[hole] = gross;
-      }
-    }
-  }
-  return { ...m, scoresA, scoresB, playerScoresA: pA, playerScoresB: pB };
-}
-
 /* ---------- component ---------- */
 type Props = {
   match: Match;
@@ -106,7 +52,7 @@ type Props = {
 export default function MatchInputPage({
   match: rawMatch, course, players, teams, onScore, refetch, focusPlayerId
 }: Props){
-  const match = useMemo(()=>normalizeMatchScores(rawMatch), [rawMatch]);
+  const match = useMemo(()=>normalizeMatch(rawMatch), [rawMatch]);
 
   const aIds = expandSide(match.sideA, teams);
   const bIds = expandSide(match.sideB, teams);
@@ -120,17 +66,31 @@ export default function MatchInputPage({
   const firstUnfilledHole = useMemo(() => {
     for (let i=0;i<18;i++){
       if (perPlayerMode){
-        const aEmpty = aIds.some(pid => (match.playerScoresA?.[pid] ?? [])[i] === undefined);
-        const bEmpty = bIds.some(pid => (match.playerScoresB?.[pid] ?? [])[i] === undefined);
+        const aEmpty = aIds.some(pid => {
+          const val = (match.playerScoresA?.[pid] ?? [])[i];
+          return val == null;
+        });
+        const bEmpty = bIds.some(pid => {
+          const val = (match.playerScoresB?.[pid] ?? [])[i];
+          return val == null;
+        });
         if (aEmpty || bEmpty) return i+1;
       } else {
         const a = (match.scoresA || [])[i];
         const b = (match.scoresB || [])[i];
-        if (a === undefined || b === undefined) return i+1;
+        if (a == null || b == null) return i+1;
       }
     }
-    return 1;
-  }, [perPlayerMode, match.id, JSON.stringify(match.playerScoresA), JSON.stringify(match.playerScoresB), JSON.stringify(match.scoresA), JSON.stringify(match.scoresB)]);
+    return 18;
+  }, [
+    perPlayerMode,
+    aIds.join(','),
+    bIds.join(','),
+    match.playerScoresA,
+    match.playerScoresB,
+    match.scoresA,
+    match.scoresB,
+  ]);
 
   const [hole, setHole] = useState<number>(firstUnfilledHole);
   useEffect(()=>{ setHole(firstUnfilledHole); }, [firstUnfilledHole]);
@@ -153,7 +113,7 @@ export default function MatchInputPage({
     return d;
   };
   const [draft, setDraft] = useState<Draft>(buildDraft(hole));
-  useEffect(()=>{ setDraft(buildDraft(hole)); }, [hole, rawMatch]);
+  useEffect(()=>{ setDraft(buildDraft(hole)); }, [hole, match]);
 
   // side toggle для 5v5
   const [side, setSide] = useState<'A'|'B'>('A');
@@ -179,24 +139,29 @@ export default function MatchInputPage({
       return onScore({ side, hole, playerId, gross, dash });
     };
 
+    const sameValue = (a: number|null|undefined| -1, b: number|null|undefined| -1) => {
+      const norm = (val: number|null|undefined| -1) => (val === undefined ? null : val);
+      return norm(a) === norm(b);
+    };
+
     if (perPlayerMode){
       for (const pid of aIds) {
         if (focusPlayerId && pid !== focusPlayerId) continue;
         const prev = (match.playerScoresA?.[pid] ?? [])[i];
         const curr = draft.A.players[pid];
-        if (curr !== prev) tasks.push(send('A', pid, curr));
+        if (!sameValue(curr, prev)) tasks.push(send('A', pid, curr));
       }
       for (const pid of bIds) {
         if (focusPlayerId && pid !== focusPlayerId) continue;
         const prev = (match.playerScoresB?.[pid] ?? [])[i];
         const curr = draft.B.players[pid];
-        if (curr !== prev) tasks.push(send('B', pid, curr));
+        if (!sameValue(curr, prev)) tasks.push(send('B', pid, curr));
       }
     } else {
       const prevA = (match.scoresA || [])[i];
       const prevB = (match.scoresB || [])[i];
-      if (draft.A.team !== prevA) tasks.push(send('A', null, draft.A.team));
-      if (draft.B.team !== prevB) tasks.push(send('B', null, draft.B.team));
+      if (!sameValue(draft.A.team, prevA)) tasks.push(send('A', null, draft.A.team));
+      if (!sameValue(draft.B.team, prevB)) tasks.push(send('B', null, draft.B.team));
     }
 
     if (tasks.length) await Promise.all(tasks);
@@ -220,22 +185,28 @@ export default function MatchInputPage({
           const allow = match.format==='singles'?ALLOW_SINGLES:ALLOW_FOURBALL;
           const sh = shotsOnHole(Math.round(hi*allow), hole-1, safeSI(course));
           const v = draft[s].players[pid] ?? null;
+          const starLabel = stars(sh);
           return (
-            <div key={pid} className="flex items-center gap-2">
-              <div className="w-36 text-sm truncate">{pl?.name ?? 'Игрок'} <span className="text-xs text-gray-500">{stars(sh)}</span></div>
-              <button className="px-3 py-2 border rounded" onClick={()=>updatePlayerSafe(s,pid, typeof v==='number' && v>1 ? v-1 : 1)}>−</button>
-              <input className="w-16 text-center border rounded py-2"
-                inputMode="numeric"
-                value={v===-1? '' : (v ?? '')}
-                placeholder="-"
-                onChange={(e)=>{
-                  const t = e.target.value.trim();
-                  if (t==='') { updatePlayerSafe(s,pid, null); return; }
-                  const n = parseInt(t,10); if (!Number.isNaN(n)) updatePlayerSafe(s,pid, n);
-                }}
-              />
-              <button className="px-3 py-2 border rounded" onClick={()=>updatePlayerSafe(s,pid, typeof v==='number' ? v+1 : 1)}>+</button>
-              <button className={`px-3 py-2 border rounded ${v===-1?'bg-gray-100':''}`} onClick={()=>updatePlayerSafe(s,pid, -1)} title="Прочерк">—</button>
+            <div key={pid} className="score-input-row">
+              <div className="score-input-label">
+                <div className="text-sm truncate">{pl?.name ?? 'Игрок'}</div>
+                {starLabel ? <div className="muted" style={{ fontSize: 11 }}>{starLabel}</div> : null}
+              </div>
+              <div className="score-input-controls">
+                <button className="px-3 py-2 border rounded" onClick={()=>updatePlayerSafe(s,pid, typeof v==='number' && v>1 ? v-1 : 1)}>−</button>
+                <input className="text-center border rounded py-2"
+                  inputMode="numeric"
+                  value={v===-1? '' : (v ?? '')}
+                  placeholder="-"
+                  onChange={(e)=>{
+                    const t = e.target.value.trim();
+                    if (t==='') { updatePlayerSafe(s,pid, null); return; }
+                    const n = parseInt(t,10); if (!Number.isNaN(n)) updatePlayerSafe(s,pid, n);
+                  }}
+                />
+                <button className="px-3 py-2 border rounded" onClick={()=>updatePlayerSafe(s,pid, typeof v==='number' ? v+1 : 1)}>+</button>
+                <button className={`px-3 py-2 border rounded ${v===-1?'bg-gray-100':''}`} onClick={()=>updatePlayerSafe(s,pid, -1)} title="Прочерк">—</button>
+              </div>
             </div>
           );
         })}
@@ -249,11 +220,11 @@ export default function MatchInputPage({
         const label = s==='A'?aName:bName;
         const v = draft[s].team;
         return (
-          <div key={s}>
-            <div className="mb-2 font-semibold">{label}</div>
-            <div className="flex items-center gap-2">
+          <div key={s} className="score-input-row">
+            <div className="score-input-label" style={{ fontWeight: 600 }}>{label}</div>
+            <div className="score-input-controls">
               <button className="px-3 py-2 border rounded" onClick={()=>updateTeam(s, typeof v==='number' && v>1 ? v-1 : 1)}>−</button>
-              <input className="w-16 text-center border rounded py-2"
+              <input className="text-center border rounded py-2"
                 inputMode="numeric"
                 value={v===-1? '' : (v ?? '')}
                 placeholder="-"
@@ -276,7 +247,7 @@ export default function MatchInputPage({
     <div className="max-w-[680px] mx-auto p-3">
       <div className="text-sm text-gray-600">{match.name} — {course.name}</div>
 
-      <div className="flex items-center justify-between my-2">
+      <div className="flex items-center justify-between my-2" style={{ flexWrap: 'wrap', gap: 8 }}>
         <button className="px-4 py-2 border rounded" disabled={hole===1} onClick={()=>go(-1)}>Назад</button>
         <div className="text-center">
           <div className="text-xs text-gray-500">Лунка</div>
