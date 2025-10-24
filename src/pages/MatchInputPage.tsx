@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Course, Match, MatchSide, Player, Team } from "../types";
+import { normalizeMatch } from "../utils";
 
 /* ---------- helpers ---------- */
 const ALLOW_SINGLES = 0.75;
@@ -8,24 +9,27 @@ const ALLOW_FOURBALL = 0.75;
 const safePars = (c: Course) =>
   Array.isArray(c.pars) && c.pars.length === 18
     ? c.pars
-    : [4,4,3,5,4,4,5,3,4, 4,5,3,4,4,5,3,4,4];
-const safeSI   = (c: Course) =>
+    : [4, 4, 3, 5, 4, 4, 5, 3, 4, 4, 5, 3, 4, 4, 5, 3, 4, 4];
+const safeSI = (c: Course) =>
   Array.isArray(c.strokeIndex) && c.strokeIndex.length === 18
     ? c.strokeIndex
     : Array(18).fill(null);
-const coursePar = (c: Course) => safePars(c).reduce((a,b)=>a+b,0);
+const coursePar = (c: Course) => safePars(c).reduce((a, b) => a + b, 0);
 const toCourseHcp = (hi: number|undefined, c: Course) => {
   if (hi == null) return 0;
   const slope = c.slope ?? 113, cr = c.cr ?? coursePar(c), par = coursePar(c);
   return Math.round(hi * (slope/113) + (cr - par));
 };
-const shotsOnHole = (ch:number, holeIdx:number, si?: (number|null)[]) => {
+const shotsOnHole = (ch: number, holeIdx: number, si?: (number | null)[]) => {
   if (!si || si.length !== 18) return 0;
   const idx = si[holeIdx] ?? 99;
-  let s = 0; if (ch >= idx) s++; if (ch>18 && ch-18>=idx) s++; if (ch>36 && ch-36>=idx) s++;
+  let s = 0;
+  if (ch >= idx) s++;
+  if (ch > 18 && ch - 18 >= idx) s++;
+  if (ch > 36 && ch - 36 >= idx) s++;
   return s;
 };
-const stars = (n:number) => (n>=2?'**': n===1?'*':'');
+const stars = (n: number) => (n >= 2 ? "**" : n === 1 ? "*" : "");
 const expandSide = (side: MatchSide[], teams: Team[]) => {
   const ids: string[] = [];
   for (const s of side) {
@@ -35,62 +39,17 @@ const expandSide = (side: MatchSide[], teams: Team[]) => {
   return Array.from(new Set(ids));
 };
 const nameOfSide = (side: MatchSide[], players: Player[], teams: Team[]) =>
-  expandSide(side, teams).map(id => players.find(p=>p.id===id)?.name ?? "—").join(" & ");
+  expandSide(side, teams)
+    .map((id) => players.find((p) => p.id === id)?.name ?? "—")
+    .join(" & ");
 
-/** ===== универсальный нормализатор ответа матча ===== */
-function extractHoleTable(anyM: any): Array<any> {
-  // Явные ключи
-  if (Array.isArray(anyM.hole_scores)) return anyM.hole_scores;
-  if (Array.isArray(anyM.holeScores))  return anyM.holeScores;
-  if (Array.isArray(anyM.scores))      return anyM.scores;
-  if (Array.isArray(anyM.rows))        return anyM.rows;
-  // Поиск первого массива объектов с полями side+hole
-  for (const k of Object.keys(anyM)) {
-    const v = (anyM as any)[k];
-    if (Array.isArray(v) && v.length && typeof v[0] === 'object' && 'hole' in v[0] && 'side' in v[0]) {
-      return v as any[];
-    }
-  }
-  return [];
-}
-
-function normalizeMatchScores(m: Match): Match {
-  const anyM: any = m as any;
-  const table = extractHoleTable(anyM);
-
-  if (!table.length) return m;
-
-  const scoresA = Array(18).fill(null) as (number|null)[];
-  const scoresB = Array(18).fill(null) as (number|null)[];
-  const pA: Record<string,(number|null)[]> = {};
-  const pB: Record<string,(number|null)[]> = {};
-
-  for (const row of table) {
-    const side: 'A'|'B' = (row.side || '').toUpperCase() === 'B' ? 'B' : 'A';
-    const pid = (row.player_id ?? row.playerId ?? row.player_key ?? row.playerKey ?? null) as string|null;
-    const hole = Math.max(1, Math.min(18, parseInt(String(row.hole),10))) - 1;
-    const isDash = Boolean(row.dash);
-    const grossVal = row.gross ?? row.score;
-    const gross: number|null = isDash ? null : (grossVal==null ? null : parseInt(String(grossVal),10));
-
-    if (side === 'A') {
-      if (pid) {
-        if (!pA[pid]) pA[pid] = Array(18).fill(undefined) as any;
-        pA[pid][hole] = gross;
-      } else {
-        scoresA[hole] = gross;
-      }
-    } else {
-      if (pid) {
-        if (!pB[pid]) pB[pid] = Array(18).fill(undefined) as any;
-        pB[pid][hole] = gross;
-      } else {
-        scoresB[hole] = gross;
-      }
-    }
-  }
-  return { ...m, scoresA, scoresB, playerScoresA: pA, playerScoresB: pB };
-}
+const pluralPlayers = (count: number) => {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${count} игрок`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${count} игрока`;
+  return `${count} игроков`;
+};
 
 /* ---------- component ---------- */
 type Props = {
@@ -106,7 +65,7 @@ type Props = {
 export default function MatchInputPage({
   match: rawMatch, course, players, teams, onScore, refetch, focusPlayerId
 }: Props){
-  const match = useMemo(()=>normalizeMatchScores(rawMatch), [rawMatch]);
+  const match = useMemo(()=>normalizeMatch(rawMatch), [rawMatch]);
 
   const aIds = expandSide(match.sideA, teams);
   const bIds = expandSide(match.sideB, teams);
@@ -120,25 +79,51 @@ export default function MatchInputPage({
   const firstUnfilledHole = useMemo(() => {
     for (let i=0;i<18;i++){
       if (perPlayerMode){
-        const aEmpty = aIds.some(pid => (match.playerScoresA?.[pid] ?? [])[i] === undefined);
-        const bEmpty = bIds.some(pid => (match.playerScoresB?.[pid] ?? [])[i] === undefined);
+        const aEmpty = aIds.some(pid => {
+          const val = (match.playerScoresA?.[pid] ?? [])[i];
+          return val == null;
+        });
+        const bEmpty = bIds.some(pid => {
+          const val = (match.playerScoresB?.[pid] ?? [])[i];
+          return val == null;
+        });
         if (aEmpty || bEmpty) return i+1;
       } else {
         const a = (match.scoresA || [])[i];
         const b = (match.scoresB || [])[i];
-        if (a === undefined || b === undefined) return i+1;
+        if (a == null || b == null) return i+1;
       }
     }
-    return 1;
-  }, [perPlayerMode, match.id, JSON.stringify(match.playerScoresA), JSON.stringify(match.playerScoresB), JSON.stringify(match.scoresA), JSON.stringify(match.scoresB)]);
+    return 18;
+  }, [
+    perPlayerMode,
+    aIds.join(','),
+    bIds.join(','),
+    match.playerScoresA,
+    match.playerScoresB,
+    match.scoresA,
+    match.scoresB,
+  ]);
 
   const [hole, setHole] = useState<number>(firstUnfilledHole);
   useEffect(()=>{ setHole(firstUnfilledHole); }, [firstUnfilledHole]);
 
   const aName = nameOfSide(match.sideA, players, teams);
   const bName = nameOfSide(match.sideB, players, teams);
-  const pars = safePars(course); const sis = safeSI(course);
-  const par = pars[hole-1]; const si = sis[hole-1];
+  const playerMap = useMemo(() => {
+    const map = new Map<string, Player>();
+    players.forEach((p) => map.set(p.id, p));
+    return map;
+  }, [players]);
+  const pars = useMemo(() => safePars(course), [course]);
+  const sis = useMemo(() => safeSI(course), [course]);
+  const par = pars[hole - 1];
+  const si = sis[hole - 1];
+  const allowance = match.format === "singles" ? ALLOW_SINGLES : ALLOW_FOURBALL;
+  const sideNames: Record<'A' | 'B', string> = {
+    A: aName || "Сторона A",
+    B: bName || "Сторона B",
+  };
 
   // черновик текущей лунки
   type Draft = {
@@ -153,19 +138,37 @@ export default function MatchInputPage({
     return d;
   };
   const [draft, setDraft] = useState<Draft>(buildDraft(hole));
-  useEffect(()=>{ setDraft(buildDraft(hole)); }, [hole, rawMatch]);
+  useEffect(() => { setDraft(buildDraft(hole)); }, [hole, match, aIds.join(','), bIds.join(',')]);
 
-  // side toggle для 5v5
-  const [side, setSide] = useState<'A'|'B'>('A');
+  const updateTeam = (s: 'A' | 'B', v: number | null | -1) =>
+    setDraft((prev) => ({ ...prev, [s]: { ...prev[s], team: v } }));
 
-  const updateTeam = (s:'A'|'B', v:number|null| -1) =>
-    setDraft(prev => ({ ...prev, [s]: { ...prev[s], team: v }}));
-  const updatePlayer = (s:'A'|'B', pid:string, v:number|null| -1) =>
-    setDraft(prev => ({ ...prev, [s]: { ...prev[s].players, [pid]: v }, players: { ...prev[s].players, [pid]: v }} as any));
+  const setPlayerValue = (s: 'A' | 'B', pid: string, v: number | null | -1) =>
+    setDraft((prev) => ({
+      ...prev,
+      [s]: { ...prev[s], players: { ...prev[s].players, [pid]: v } },
+    }));
 
-  // аккуратно: не использовать setDraft с неправильным ключом
-  const updatePlayerSafe = (s:'A'|'B', pid:string, v:number|null| -1) =>
-    setDraft(prev => ({ ...prev, [s]: { ...prev[s], players: { ...prev[s].players, [pid]: v }}}));
+  const [saving, setSaving] = useState(false);
+
+  const strokeSummary = useMemo(() => {
+    const list: { side: 'A' | 'B'; playerId: string; name: string; strokes: number }[] = [];
+    const collect = (ids: string[], side: 'A' | 'B') => {
+      ids.forEach((pid) => {
+        const player = playerMap.get(pid);
+        if (!player) return;
+        const courseHcp = toCourseHcp(player.hcp, course);
+        const playing = Math.round(courseHcp * allowance);
+        const strokes = shotsOnHole(playing, hole - 1, sis);
+        if (strokes > 0) {
+          list.push({ side, playerId: pid, name: player.name, strokes });
+        }
+      });
+    };
+    collect(aIds, 'A');
+    collect(bIds, 'B');
+    return list;
+  }, [aIds.join(','), bIds.join(','), allowance, course, hole, playerMap, sis]);
 
   // ——— сохранение текущей лунки
   const persistHole = async () => {
@@ -179,28 +182,38 @@ export default function MatchInputPage({
       return onScore({ side, hole, playerId, gross, dash });
     };
 
+    const sameValue = (a: number|null|undefined| -1, b: number|null|undefined| -1) => {
+      const norm = (val: number|null|undefined| -1) => (val === undefined ? null : val);
+      return norm(a) === norm(b);
+    };
+
     if (perPlayerMode){
       for (const pid of aIds) {
         if (focusPlayerId && pid !== focusPlayerId) continue;
         const prev = (match.playerScoresA?.[pid] ?? [])[i];
         const curr = draft.A.players[pid];
-        if (curr !== prev) tasks.push(send('A', pid, curr));
+        if (!sameValue(curr, prev)) tasks.push(send('A', pid, curr));
       }
       for (const pid of bIds) {
         if (focusPlayerId && pid !== focusPlayerId) continue;
         const prev = (match.playerScoresB?.[pid] ?? [])[i];
         const curr = draft.B.players[pid];
-        if (curr !== prev) tasks.push(send('B', pid, curr));
+        if (!sameValue(curr, prev)) tasks.push(send('B', pid, curr));
       }
     } else {
       const prevA = (match.scoresA || [])[i];
       const prevB = (match.scoresB || [])[i];
-      if (draft.A.team !== prevA) tasks.push(send('A', null, draft.A.team));
-      if (draft.B.team !== prevB) tasks.push(send('B', null, draft.B.team));
+      if (!sameValue(draft.A.team, prevA)) tasks.push(send('A', null, draft.A.team));
+      if (!sameValue(draft.B.team, prevB)) tasks.push(send('B', null, draft.B.team));
     }
 
-    if (tasks.length) await Promise.all(tasks);
-    await refetch(); // подтянуть сохранённые значения
+    setSaving(true);
+    try {
+      if (tasks.length) await Promise.all(tasks);
+      await refetch(); // подтянуть сохранённые значения
+    } finally {
+      setSaving(false);
+    }
   };
 
   const go = async (dir:-1|1) => {
@@ -208,93 +221,210 @@ export default function MatchInputPage({
     setHole(h => Math.max(1, Math.min(18, h + dir)));
   };
 
+  const saveCurrentHole = async () => {
+    await persistHole();
+  };
+
+  const isFirstHole = hole === 1;
+  const isLastHole = hole === 18;
+
   // UI
   const renderPerPlayer = (s:'A'|'B') => {
     const ids = s==='A' ? aIds : bIds;
-    const rows = (focusPlayerId && ids.includes(focusPlayerId)) ? [focusPlayerId] : ids;
+    if (!ids.length) return null;
+    const rows = focusPlayerId && ids.includes(focusPlayerId) ? [focusPlayerId] : ids;
+    const note = focusPlayerId && rows.length === 1 ? 'Индивидуальный ввод' : pluralPlayers(ids.length);
     return (
-      <div className="grid gap-2">
-        {rows.map(pid=>{
-          const pl = players.find(p=>p.id===pid);
-          const hi = toCourseHcp(pl?.hcp, course);
-          const allow = match.format==='singles'?ALLOW_SINGLES:ALLOW_FOURBALL;
-          const sh = shotsOnHole(Math.round(hi*allow), hole-1, safeSI(course));
-          const v = draft[s].players[pid] ?? null;
-          return (
-            <div key={pid} className="flex items-center gap-2">
-              <div className="w-36 text-sm truncate">{pl?.name ?? 'Игрок'} <span className="text-xs text-gray-500">{stars(sh)}</span></div>
-              <button className="px-3 py-2 border rounded" onClick={()=>updatePlayerSafe(s,pid, typeof v==='number' && v>1 ? v-1 : 1)}>−</button>
-              <input className="w-16 text-center border rounded py-2"
-                inputMode="numeric"
-                value={v===-1? '' : (v ?? '')}
-                placeholder="-"
-                onChange={(e)=>{
-                  const t = e.target.value.trim();
-                  if (t==='') { updatePlayerSafe(s,pid, null); return; }
-                  const n = parseInt(t,10); if (!Number.isNaN(n)) updatePlayerSafe(s,pid, n);
-                }}
-              />
-              <button className="px-3 py-2 border rounded" onClick={()=>updatePlayerSafe(s,pid, typeof v==='number' ? v+1 : 1)}>+</button>
-              <button className={`px-3 py-2 border rounded ${v===-1?'bg-gray-100':''}`} onClick={()=>updatePlayerSafe(s,pid, -1)} title="Прочерк">—</button>
-            </div>
-          );
-        })}
-      </div>
+      <section key={s} className="score-side">
+        <div className="score-side-header">
+          <div className="score-side-title">{sideNames[s]}</div>
+          <div className="score-side-note">{note}</div>
+        </div>
+        <div className="score-side-body">
+          {rows.map((pid) => {
+            const player = playerMap.get(pid);
+            const courseHcp = toCourseHcp(player?.hcp, course);
+            const playing = Math.round(courseHcp * allowance);
+            const strokeCount = shotsOnHole(playing, hole - 1, sis);
+            const hasStroke = strokeCount > 0;
+            const v = draft[s].players[pid] ?? null;
+            return (
+              <div key={pid} className="score-player-row">
+                <div className="score-player-info">
+                  <div className="score-player-name">{player?.name ?? 'Игрок'}</div>
+                  <div className="score-player-meta">
+                    {playing !== 0 ? (
+                      <span className="hcp-badge">Игр. HCP {playing}</span>
+                    ) : null}
+                    {hasStroke ? (
+                      <span className={`stroke-badge${strokeCount >= 2 ? ' strong' : ''}`}>
+                        +{strokeCount} {strokeCount === 1 ? 'удар' : 'удара'}
+                      </span>
+                    ) : null}
+                    {hasStroke ? <span className="stroke-marker">{stars(strokeCount)}</span> : null}
+                  </div>
+                </div>
+                <div className="score-player-controls">
+                  <button
+                    type="button"
+                    onClick={() => setPlayerValue(s, pid, typeof v === 'number' && v > 1 ? v - 1 : 1)}
+                    disabled={saving}
+                  >
+                    −
+                  </button>
+                  <input
+                    inputMode="numeric"
+                    value={v === -1 ? '' : v ?? ''}
+                    placeholder="-"
+                    onChange={(e) => {
+                      const t = e.target.value.trim();
+                      if (t === '') { setPlayerValue(s, pid, null); return; }
+                      const n = parseInt(t, 10);
+                      if (!Number.isNaN(n)) setPlayerValue(s, pid, n);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setPlayerValue(s, pid, typeof v === 'number' ? v + 1 : 1)}
+                    disabled={saving}
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    className={v === -1 ? 'dash-active' : undefined}
+                    onClick={() => setPlayerValue(s, pid, -1)}
+                    title="Прочерк"
+                    disabled={saving}
+                  >
+                    —
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
     );
   };
 
   const renderTeam = () => (
-    <div className="grid grid-cols-2 gap-8">
-      {(['A','B'] as const).map(s=>{
-        const label = s==='A'?aName:bName;
-        const v = draft[s].team;
-        return (
-          <div key={s}>
-            <div className="mb-2 font-semibold">{label}</div>
-            <div className="flex items-center gap-2">
-              <button className="px-3 py-2 border rounded" onClick={()=>updateTeam(s, typeof v==='number' && v>1 ? v-1 : 1)}>−</button>
-              <input className="w-16 text-center border rounded py-2"
-                inputMode="numeric"
-                value={v===-1? '' : (v ?? '')}
-                placeholder="-"
-                onChange={(e)=>{
-                  const t=e.target.value.trim();
-                  if (t==='') { updateTeam(s, null); return; }
-                  const n=parseInt(t,10); if(!Number.isNaN(n)) updateTeam(s, n);
-                }}
-              />
-              <button className="px-3 py-2 border rounded" onClick={()=>updateTeam(s, typeof v==='number' ? v+1 : 1)}>+</button>
-              <button className={`px-3 py-2 border rounded ${v===-1?'bg-gray-100':''}`} onClick={()=>updateTeam(s,-1)} title="Прочерк">—</button>
+    (['A', 'B'] as const).map((s) => {
+      const v = draft[s].team;
+      return (
+        <section key={s} className="score-side">
+          <div className="score-side-header">
+            <div className="score-side-title">{sideNames[s]}</div>
+            <div className="score-side-note">Командный gross</div>
+          </div>
+          <div className="score-side-body">
+            <div className="score-player-row">
+              <div className="score-player-info">
+                <div className="score-player-name">Счёт лунки</div>
+                <div className="score-player-meta">
+                  <span>Введите общий gross команды.</span>
+                </div>
+              </div>
+              <div className="score-player-controls">
+                <button
+                  type="button"
+                  onClick={() => updateTeam(s, typeof v === 'number' && v > 1 ? v - 1 : 1)}
+                  disabled={saving}
+                >
+                  −
+                </button>
+                <input
+                  inputMode="numeric"
+                  value={v === -1 ? '' : v ?? ''}
+                  placeholder="-"
+                  onChange={(e) => {
+                    const t = e.target.value.trim();
+                    if (t === '') { updateTeam(s, null); return; }
+                    const n = parseInt(t, 10);
+                    if (!Number.isNaN(n)) updateTeam(s, n);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => updateTeam(s, typeof v === 'number' ? v + 1 : 1)}
+                  disabled={saving}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  className={v === -1 ? 'dash-active' : undefined}
+                  onClick={() => updateTeam(s, -1)}
+                  title="Прочерк"
+                  disabled={saving}
+                >
+                  —
+                </button>
+              </div>
             </div>
           </div>
-        );
-      })}
-    </div>
+        </section>
+      );
+    })
   );
 
   return (
-    <div className="max-w-[680px] mx-auto p-3">
-      <div className="text-sm text-gray-600">{match.name} — {course.name}</div>
-
-      <div className="flex items-center justify-between my-2">
-        <button className="px-4 py-2 border rounded" disabled={hole===1} onClick={()=>go(-1)}>Назад</button>
-        <div className="text-center">
-          <div className="text-xs text-gray-500">Лунка</div>
-          <div className="text-2xl font-bold">{hole}</div>
-          <div className="text-xs text-gray-500">Par {par} • SI {si ?? '—'}</div>
+    <div className="score-input-page">
+      <div className="hole-header">
+        <div className="hole-header-top">
+          <div className="hole-chip">{match.name}</div>
+          <div className="hole-course">{course.name}</div>
         </div>
-        <button className="px-4 py-2 border rounded" disabled={hole===18} onClick={()=>go(1)}>Далее</button>
+        <div className="hole-meta">
+          <div className="hole-count">Лунка {hole} из 18</div>
+          <div className="hole-info">
+            <span>Par {par}</span>
+            <span>SI {si ?? '—'}</span>
+          </div>
+        </div>
       </div>
 
-      {perPlayerMode ? (
-        <>
-          {renderPerPlayer('A')}
-          <div className="my-2" />
-          {renderPerPlayer('B')}
-        </>
-      ) : renderTeam()}
+      {strokeSummary.length ? (
+        <div className="stroke-summary-card">
+          <div className="stroke-summary-title">Фора на этой лунке</div>
+          <ul className="stroke-summary-list">
+            {strokeSummary.map((item) => (
+              <li key={`${item.side}-${item.playerId}`}>
+                <strong>{item.name}</strong>
+                <span className="stroke-summary-side">{sideNames[item.side]}</span>
+                <span className="stroke-summary-value">+{item.strokes}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
-      <div className="mt-4 text-xs text-gray-500">Подсказка: «—» — прочерк (в бэстболле игрок не учитывается, в сингле — лунка проиграна). Значения сохраняются при нажатии «Назад/Далее».</div>
+      <div className={`score-card ${perPlayerMode ? 'per-player' : 'team-mode'}`}>
+        {perPlayerMode ? (
+          <>
+            {renderPerPlayer('A')}
+            {renderPerPlayer('B')}
+          </>
+        ) : (
+          renderTeam()
+        )}
+      </div>
+
+      <div className="score-input-nav">
+        <button type="button" onClick={() => go(-1)} disabled={isFirstHole || saving}>
+          Назад
+        </button>
+        <button type="button" onClick={saveCurrentHole} disabled={saving}>
+          Сохранить
+        </button>
+        <button type="button" className="primary" onClick={() => go(1)} disabled={isLastHole || saving}>
+          Далее
+        </button>
+      </div>
+
+      <div className="score-hint">
+        «—» — прочерк (в бэстболле игрок не учитывается, в сингле — лунка проиграна). Значения сохраняются кнопками ниже.
+      </div>
     </div>
   );
 }

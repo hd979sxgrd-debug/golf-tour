@@ -11,6 +11,7 @@ import {
   apiDeleteMatch,
 } from './api';
 import MatchPage from './pages/MatchPage';
+import { normalizeMatch, normalizeMatches } from './utils';
 
 // ...
 function useHashRoute(){
@@ -62,7 +63,7 @@ export default function App() {
     setPlayers(data.players);
     setTeams(data.teams as any);
     setCourses(data.courses);
-    setMatches(data.matches);
+    setMatches(normalizeMatches(data.matches));
     setHydrated(true);
   };
   useEffect(() => { loadAll().catch(console.error); }, []);
@@ -93,7 +94,7 @@ export default function App() {
     if ((parsed.mode === 'match' || parsed.mode === 'view') && parsed.matchId) {
       // ЗАГРУЗКА МАТЧА + hole_scores
       apiGetMatchWithScores(parsed.matchId)
-        .then(({ match, course }) => setMatchDetail({ match, course }))
+        .then(({ match, course }) => setMatchDetail({ match: normalizeMatch(match), course }))
         .catch(err => {
           console.error(err);
           setMatchDetail(null);
@@ -102,7 +103,7 @@ export default function App() {
       // polling для LIVE
       const t = window.setInterval(() => {
         apiGetMatchWithScores(parsed.matchId!)
-          .then(({ match, course }) => setMatchDetail({ match, course }))
+          .then(({ match, course }) => setMatchDetail({ match: normalizeMatch(match), course }))
           .catch(() => {});
       }, parsed.mode === 'match' ? 4000 : 5000);
       setPollTimer(t as unknown as number);
@@ -120,8 +121,14 @@ export default function App() {
         <a href="#/public" className="font-bold">Golf Scorer</a>
         <div className="flex items-center gap-2">
           <a className="btn" href="#/public">Публичная</a>
-          <a className="btn" href="#/admin">Админка</a>
-          {isAdmin ? <button className="btn" onClick={doLogout}>Выйти</button> : <a className="btn" href="#/login">Войти</a>}
+          {isAdmin ? (
+            <>
+              <span className="chip">Администратор</span>
+              <button className="btn" onClick={doLogout}>Выйти</button>
+            </>
+          ) : (
+            <a className="btn" href="#/login">Войти</a>
+          )}
         </div>
       </div>
     </div>

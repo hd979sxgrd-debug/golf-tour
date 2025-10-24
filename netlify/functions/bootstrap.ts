@@ -128,10 +128,28 @@ export const handler: Handler = async () => {
     // matches — гарантируем базовую схему и читаем с учётом имени колонки дня
     await ensureMatchesSchema(pool);
     const { col: dayCol } = await resolveDayCol(pool);
-    const matches = (await pool.query(
+    const matchRows = (await pool.query(
       `select id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
          from matches order by ${dayCol} nulls last`
-    )).rows.map((m:any) => ({
+    )).rows as any[];
+
+    const holeScoresMap = new Map<string, any[]>();
+    if (matchRows.length) {
+      const { rows: scoreRows } = await pool.query(
+        `select match_id, side, player_id, hole, gross, dash
+           from hole_scores
+          where match_id = any($1::text[])
+          order by match_id, side, hole, coalesce(player_id,'')`,
+        [matchRows.map((m) => m.id)]
+      );
+      for (const row of scoreRows) {
+        const list = holeScoresMap.get(row.match_id) || [];
+        list.push(row);
+        holeScoresMap.set(row.match_id, list);
+      }
+    }
+
+    const matches = matchRows.map((m:any) => ({
       id: m.id,
       name: m.name,
       day: m.day,
@@ -141,6 +159,7 @@ export const handler: Handler = async () => {
       sideB: m.side_b,
       sideATeamId: m.side_a_team_id || undefined,
       sideBTeamId: m.side_b_team_id || undefined,
+      hole_scores: holeScoresMap.get(m.id) ?? [],
     }));
 
     return ok({ players, teams, courses, matches });

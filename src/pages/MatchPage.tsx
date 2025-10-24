@@ -89,7 +89,7 @@ export default function MatchPage({ matchId, readOnlyParam }: { matchId: string;
           teams={teams}
           readOnly={readOnly}
           onScore={readOnly ? undefined : onScore}
-          afterPersist={readOnly ? undefined : refetch}
+          refetch={readOnly ? undefined : refetch}
         />
       </div>
     </div>

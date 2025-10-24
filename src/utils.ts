@@ -7,6 +7,177 @@ export const defaultPars = () => [4,4,3,5,4,4,5,3,4, 4,5,3,4,4,5,3,4,4];
 export const sum = (arr:(number|null)[]) => arr.reduce((a,v)=> a + (typeof v==='number'? v:0), 0);
 export const coursePar = (course: Course) => (course.pars?.reduce((a,b)=>a+b,0)) || 72;
 
+type HoleRow = {
+  side?: string;
+  hole?: number | string;
+  gross?: number | string | null;
+  score?: number | string | null;
+  dash?: boolean;
+  player_id?: string | null;
+  playerId?: string | null;
+  player_key?: string | null;
+  playerKey?: string | null;
+};
+
+const emptyGrossRow = () => Array(18).fill(undefined) as (number | null | undefined)[];
+
+const normalizeValue = (val: any): number | null | undefined => {
+  if (val === undefined) return undefined;
+  if (val === null) return null;
+  if (typeof val === 'number') return Number.isFinite(val) ? val : null;
+  const num = Number(val);
+  return Number.isFinite(num) ? num : null;
+};
+
+const extractPlayerId = (row: HoleRow): string | null => {
+  return (
+    row.player_id ??
+    row.playerId ??
+    row.player_key ??
+    row.playerKey ??
+    null
+  );
+};
+
+export function extractHoleTable(anyM: any): HoleRow[] {
+  if (!anyM) return [];
+  if (Array.isArray(anyM.hole_scores)) return anyM.hole_scores as HoleRow[];
+  if (Array.isArray(anyM.holeScores)) return anyM.holeScores as HoleRow[];
+  if (Array.isArray(anyM.scores)) return anyM.scores as HoleRow[];
+  if (Array.isArray(anyM.rows)) return anyM.rows as HoleRow[];
+  for (const key of Object.keys(anyM)) {
+    const value = (anyM as any)[key];
+    if (Array.isArray(value) && value.length > 0) {
+      const first = value[0];
+      if (first && typeof first === 'object' && 'hole' in first && 'side' in first) {
+        return value as HoleRow[];
+      }
+    }
+  }
+  return [];
+}
+
+const cloneSide = (side?: MatchSide[] | null): MatchSide[] => {
+  if (!Array.isArray(side)) return [];
+  return side.map(item => ({ ...item }));
+};
+
+const clonePlayerScores = (src: Record<string, any> | undefined | null) => {
+  const result: Record<string, (number | null | undefined)[]> = {};
+  if (!src || typeof src !== 'object') return result;
+  for (const [pid, arr] of Object.entries(src)) {
+    const target = emptyGrossRow();
+    if (Array.isArray(arr)) {
+      arr.forEach((value, index) => {
+        if (index < 18) target[index] = normalizeValue(value);
+      });
+    }
+    result[pid] = target;
+  }
+  return result;
+};
+
+const compactPlayerScores = (src: Record<string, (number | null | undefined)[]>) => {
+  const result: Record<string, (number | null | undefined)[]> = {};
+  for (const [pid, arr] of Object.entries(src)) {
+    if (arr.some(value => value !== undefined)) {
+      result[pid] = arr;
+    }
+  }
+  return Object.keys(result).length ? result : undefined;
+};
+
+export function normalizeMatch(raw: any): Match {
+  const table = extractHoleTable(raw);
+
+  const baseScoresA = emptyGrossRow();
+  const baseScoresB = emptyGrossRow();
+
+  const match: Match = {
+    id: raw.id,
+    name: raw.name,
+    day: raw.day ?? raw.day_label ?? raw.match_day ?? undefined,
+    format: raw.format,
+    courseId: raw.courseId ?? raw.course_id,
+    sideATeamId: raw.sideATeamId ?? raw.side_a_team_id ?? undefined,
+    sideBTeamId: raw.sideBTeamId ?? raw.side_b_team_id ?? undefined,
+    sideA: cloneSide(raw.sideA ?? raw.side_a),
+    sideB: cloneSide(raw.sideB ?? raw.side_b),
+    scoresA: baseScoresA,
+    scoresB: baseScoresB,
+    playerScoresA: undefined,
+    playerScoresB: undefined,
+    notes: raw.notes,
+  };
+
+  if (Array.isArray(raw.scoresA)) {
+    raw.scoresA.forEach((value: any, index: number) => {
+      if (index < 18) match.scoresA[index] = normalizeValue(value);
+    });
+  }
+  if (Array.isArray(raw.scoresB)) {
+    raw.scoresB.forEach((value: any, index: number) => {
+      if (index < 18) match.scoresB[index] = normalizeValue(value);
+    });
+  }
+
+  const initialPlayerScoresA = clonePlayerScores(raw.playerScoresA ?? raw.player_scores_a);
+  const initialPlayerScoresB = clonePlayerScores(raw.playerScoresB ?? raw.player_scores_b);
+
+  let perPlayerA = initialPlayerScoresA;
+  let perPlayerB = initialPlayerScoresB;
+
+  const ensurePlayerRow = (
+    container: Record<string, (number | null | undefined)[]>,
+    pid: string,
+  ) => {
+    if (!container[pid]) {
+      container[pid] = emptyGrossRow();
+    }
+    return container[pid];
+  };
+
+  if (table.length > 0) {
+    perPlayerA = { ...perPlayerA };
+    perPlayerB = { ...perPlayerB };
+
+    table.forEach((row) => {
+      const side = String(row.side || 'A').toUpperCase() === 'B' ? 'B' : 'A';
+      const holeIndex = Math.min(
+        17,
+        Math.max(0, parseInt(String(row.hole ?? 0), 10) - 1)
+      );
+      const dash = Boolean(row.dash);
+      const rawGross = row.gross ?? row.score ?? null;
+      const value = dash ? -1 : normalizeValue(rawGross);
+      const pid = extractPlayerId(row);
+
+      if (side === 'A') {
+        if (pid) {
+          ensurePlayerRow(perPlayerA, pid)[holeIndex] = value;
+        } else {
+          match.scoresA[holeIndex] = value;
+        }
+      } else {
+        if (pid) {
+          ensurePlayerRow(perPlayerB, pid)[holeIndex] = value;
+        } else {
+          match.scoresB[holeIndex] = value;
+        }
+      }
+    });
+  }
+
+  match.playerScoresA = compactPlayerScores(perPlayerA);
+  match.playerScoresB = compactPlayerScores(perPlayerB);
+
+  return match;
+}
+
+export function normalizeMatches(rawMatches: any[]): Match[] {
+  return Array.isArray(rawMatches) ? rawMatches.map(normalizeMatch) : [];
+}
+
 export function toCourseHandicap(hi: number|undefined, course: Course): number{
   if(!hi) return 0;
   const slope = course.slope ?? 113;
