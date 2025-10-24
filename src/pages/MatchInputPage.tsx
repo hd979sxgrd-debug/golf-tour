@@ -3,10 +3,16 @@ import { Course, Match, MatchSide, Player, Team } from "../types";
 
 /* ---------- helpers ---------- */
 const ALLOW_SINGLES = 0.75;
-const ALLOW_FOURBALL = 0.75; // по вашему требованию
+const ALLOW_FOURBALL = 0.75;
 
-const safePars = (c: Course) => (Array.isArray(c.pars) && c.pars.length === 18 ? c.pars : [4,4,3,5,4,4,5,3,4, 4,5,3,4,4,5,3,4,4]);
-const safeSI   = (c: Course) => (Array.isArray(c.strokeIndex) && c.strokeIndex.length === 18 ? c.strokeIndex : Array(18).fill(null));
+const safePars = (c: Course) =>
+  Array.isArray(c.pars) && c.pars.length === 18
+    ? c.pars
+    : [4,4,3,5,4,4,5,3,4, 4,5,3,4,4,5,3,4,4];
+const safeSI   = (c: Course) =>
+  Array.isArray(c.strokeIndex) && c.strokeIndex.length === 18
+    ? c.strokeIndex
+    : Array(18).fill(null);
 const coursePar = (c: Course) => safePars(c).reduce((a,b)=>a+b,0);
 const toCourseHcp = (hi: number|undefined, c: Course) => {
   if (hi == null) return 0;
@@ -31,18 +37,13 @@ const expandSide = (side: MatchSide[], teams: Team[]) => {
 const nameOfSide = (side: MatchSide[], players: Player[], teams: Team[]) =>
   expandSide(side, teams).map(id => players.find(p=>p.id===id)?.name ?? "—").join(" & ");
 
-type Draft = {
-  A: { team: number|null| -1; players: Record<string, number|null| -1> };
-  B: { team: number|null| -1; players: Record<string, number|null| -1> };
-};
-
 /** Собираем playerScoresA/B и командные scoresA/B из ответа БД (hole_scores) */
 function normalizeMatchScores(m: Match): Match {
   const anyM: any = m as any;
   const table: Array<{side:'A'|'B'; player_id: string|null; hole:number; gross:number|null; dash?:boolean}>
     = anyM.hole_scores || anyM.holeScores || [];
 
-  if (!table.length) return m; // уже есть разложенные поля — используем как есть
+  if (!table.length) return m;
 
   const scoresA = Array(18).fill(null) as (number|null)[];
   const scoresB = Array(18).fill(null) as (number|null)[];
@@ -82,12 +83,18 @@ type Props = {
   focusPlayerId?: string;
 };
 
-export default function MatchInputPage({ match: rawMatch, course, players, teams, onScore, refetch, focusPlayerId }: Props){
+export default function MatchInputPage({
+  match: rawMatch, course, players, teams, onScore, refetch, focusPlayerId
+}: Props){
   const match = useMemo(()=>normalizeMatchScores(rawMatch), [rawMatch]);
 
   const aIds = expandSide(match.sideA, teams);
   const bIds = expandSide(match.sideB, teams);
-  const perPlayerMode = match.format === "fourball" && (aIds.length > 2 || bIds.length > 2);
+
+  // ⬅️ FIX: singles всегда поигровочно → будет playerId (не null)
+  const perPlayerMode =
+    match.format === "singles" ||
+    (match.format === "fourball" && (aIds.length > 2 || bIds.length > 2));
 
   // ——— первая НЕЗАПОЛНЕННАЯ лунка: undefined = пусто; null = прочерк (считаем ЗАПОЛНЕНО)
   const firstUnfilledHole = useMemo(() => {
@@ -103,7 +110,7 @@ export default function MatchInputPage({ match: rawMatch, course, players, teams
       }
     }
     return 1;
-  }, [match.id, JSON.stringify(match.playerScoresA), JSON.stringify(match.playerScoresB), JSON.stringify(match.scoresA), JSON.stringify(match.scoresB)]);
+  }, [perPlayerMode, match.id, JSON.stringify(match.playerScoresA), JSON.stringify(match.playerScoresB), JSON.stringify(match.scoresA), JSON.stringify(match.scoresB)]);
 
   const [hole, setHole] = useState<number>(firstUnfilledHole);
   useEffect(()=>{ setHole(firstUnfilledHole); }, [firstUnfilledHole]);
@@ -114,6 +121,10 @@ export default function MatchInputPage({ match: rawMatch, course, players, teams
   const par = pars[hole-1]; const si = sis[hole-1];
 
   // черновик текущей лунки
+  type Draft = {
+    A: { team: number|null| -1; players: Record<string, number|null| -1> };
+    B: { team: number|null| -1; players: Record<string, number|null| -1> };
+  };
   const buildDraft = (h:number): Draft => {
     const i = h-1;
     const d: Draft = { A:{team: (match.scoresA||[])[i] ?? null, players: {}}, B:{team: (match.scoresB||[])[i] ?? null, players: {}} };
@@ -122,7 +133,7 @@ export default function MatchInputPage({ match: rawMatch, course, players, teams
     return d;
   };
   const [draft, setDraft] = useState<Draft>(buildDraft(hole));
-  useEffect(()=>{ setDraft(buildDraft(hole)); }, [hole, rawMatch]); // rawMatch — чтобы реагировать на refetch
+  useEffect(()=>{ setDraft(buildDraft(hole)); }, [hole, rawMatch]);
 
   // side toggle для 5v5
   const [side, setSide] = useState<'A'|'B'>('A');
@@ -145,6 +156,7 @@ export default function MatchInputPage({ match: rawMatch, course, players, teams
     };
 
     if (perPlayerMode){
+      // singles → по одному pid в каждой стороне; fourball 5v5 → много pid
       for (const pid of aIds) {
         if (focusPlayerId && pid !== focusPlayerId) continue;
         const prev = (match.playerScoresA?.[pid] ?? [])[i];
@@ -158,6 +170,7 @@ export default function MatchInputPage({ match: rawMatch, course, players, teams
         if (curr !== prev) tasks.push(send('B', pid, curr));
       }
     } else {
+      // fourball 2v2 (командой) → playerId = null
       const prevA = (match.scoresA || [])[i];
       const prevB = (match.scoresB || [])[i];
       if (draft.A.team !== prevA) tasks.push(send('A', null, draft.A.team));
@@ -174,11 +187,9 @@ export default function MatchInputPage({ match: rawMatch, course, players, teams
   };
 
   // UI
-
   const renderPerPlayer = (s:'A'|'B') => {
     const ids = s==='A' ? aIds : bIds;
     const rows = (focusPlayerId && ids.includes(focusPlayerId)) ? [focusPlayerId] : ids;
-
     return (
       <div className="grid gap-2">
         {rows.map(pid=>{
@@ -255,13 +266,20 @@ export default function MatchInputPage({ match: rawMatch, course, players, teams
 
       {perPlayerMode ? (
         <>
-          {!focusPlayerId && (
+          {/* в 5v5 без focus — таб «A/B»; в singles игроков по одному — список и так короткий */}
+          {match.format==='fourball' && (aIds.length>2 || bIds.length>2) && !focusPlayerId && (
             <div className="flex gap-2 mb-3">
               <button className={`px-3 py-1 border rounded ${side==='A'?'bg-red-50 border-red-400':''}`} onClick={()=>setSide('A')}>A</button>
               <button className={`px-3 py-1 border rounded ${side==='B'?'bg-blue-50 border-blue-400':''}`} onClick={()=>setSide('B')}>B</button>
             </div>
           )}
-          {renderPerPlayer(side)}
+          {renderPerPlayer(match.format==='fourball' && (aIds.length>2 || bIds.length>2) && !focusPlayerId ? side : 'A')}
+          {match.format==='fourball' && (aIds.length>2 || bIds.length>2) && !focusPlayerId && side==='A' ? null : null}
+          {/* если нужен одновременно показ B при singles — можно вывести обе секции:
+              {renderPerPlayer('A')}{renderPerPlayer('B')} */}
+          {match.format==='singles' && (
+            <div className="mt-3">{renderPerPlayer('B')}</div>
+          )}
         </>
       ) : renderTeam()}
 
