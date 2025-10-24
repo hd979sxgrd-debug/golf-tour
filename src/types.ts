@@ -16,10 +16,10 @@ export type Match = {
   sideA: MatchSide[];
   sideB: MatchSide[];
   /** командные gross (можно не использовать при поигровочном вводе) */
-  scoresA: (number | null)[];
-  scoresB: (number | null)[];
+  scoresA: (number | null | undefined)[];
+  scoresB: (number | null | undefined)[];
   /** поигровочные gross: значение -1 = ПРОЧЕРК */
-  playerScoresA?: Record<string, (number|null)[]>;
-  playerScoresB?: Record<string, (number|null)[]>;
+  playerScoresA?: Record<string, (number | null | undefined)[]>;
+  playerScoresB?: Record<string, (number | null | undefined)[]>;
   notes?: string;
 };

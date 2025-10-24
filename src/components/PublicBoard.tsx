@@ -1,7 +1,7 @@
 // src/components/PublicBoard.tsx
-import React from 'react'
+import React, { useMemo } from 'react'
 import { Match, Player, Team, Course } from '../types'
-import { calcMatchPlayStatus, calcPoints, matchProgress } from '../utils'
+import { calcMatchPlayStatus, calcPoints, matchProgress, normalizeMatch } from '../utils'
 
 type Props = {
   matches: Match[];
@@ -13,39 +13,60 @@ type Props = {
 const DAYS = ['Day 1','Day 2','Day 3','Day 4','Day 5'];
 
 export default function PublicBoard({ matches, courses, players, teams }: Props){
-  const courseOf = (id: string) => courses.find(c=>c.id===id)!;
+  const normalizedMatches = useMemo(() => matches.map(normalizeMatch), [matches]);
+
+  const courseOf = (id: string) => courses.find(c=>c.id===id);
   const teamName = (id?: string) => teams.find(t=>t.id===id)?.name ?? (id ? id : '—');
 
   // --- Очки по дням и командам ---
   const totalsByDay: Record<string, Record<string, number>> = {};
   DAYS.forEach(d => (totalsByDay[d] = {}));
+  const overallTotals: Record<string, number> = {};
+  const participating = new Set<string>();
 
   const pushPoints = (day: string, teamId: string, pts: number) => {
     if (!teamId) return;
     if (!totalsByDay[day]) totalsByDay[day] = {};
     totalsByDay[day][teamId] = (totalsByDay[day][teamId] ?? 0) + pts;
+    overallTotals[teamId] = (overallTotals[teamId] ?? 0) + pts;
+    participating.add(teamId);
   };
 
-  matches.forEach(m => {
+  normalizedMatches.forEach(m => {
     const day = m.day ?? 'Day 1';
     if (!DAYS.includes(day)) return;
     const c = courseOf(m.courseId);
+    if (!c) return;
     const res = calcMatchPlayStatus(m, players, teams, c);
     const pts = calcPoints(res.perHole);
     if (m.sideATeamId) pushPoints(day, m.sideATeamId, pts.A);
     if (m.sideBTeamId) pushPoints(day, m.sideBTeamId, pts.B);
   });
 
-  // Выбираем 2 команды (первые созданные)
-  const [teamAId, teamBId] = teams.slice(0, 2).map(t => t.id);
+  const rankedTeams = Array.from(participating).sort((a, b) => {
+    const diff = (overallTotals[b] ?? 0) - (overallTotals[a] ?? 0);
+    if (diff !== 0) return diff;
+    const nameA = teamName(a);
+    const nameB = teamName(b);
+    return nameA.localeCompare(nameB);
+  });
+
+  const fallbackTeams = teams.slice(0, 2).map(t => t.id);
+  while (rankedTeams.length < 2 && fallbackTeams.length) {
+    const next = fallbackTeams.shift();
+    if (next && !participating.has(next)) rankedTeams.push(next);
+  }
+
+  const teamAId = rankedTeams[0];
+  const teamBId = rankedTeams[1];
   const teamAName = teamName(teamAId) || 'Team A';
   const teamBName = teamName(teamBId) || 'Team B';
 
   // Подсчёт тоталов
   let grandA = 0, grandB = 0;
   const rows = DAYS.map(day => {
-    const a = totalsByDay[day]?.[teamAId ?? ''] ?? 0;
-    const b = totalsByDay[day]?.[teamBId ?? ''] ?? 0;
+    const a = teamAId ? (totalsByDay[day]?.[teamAId] ?? 0) : 0;
+    const b = teamBId ? (totalsByDay[day]?.[teamBId] ?? 0) : 0;
     grandA += a; grandB += b;
     return { day, a, b };
   });
@@ -53,7 +74,7 @@ export default function PublicBoard({ matches, courses, players, teams }: Props)
   // Группировка матчей по дням для списков
   const matchesByDay: Record<string, Match[]> = {};
   DAYS.forEach(d => matchesByDay[d] = []);
-  matches.forEach(m => {
+  normalizedMatches.forEach(m => {
     const d = m.day ?? 'Day 1';
     if (DAYS.includes(d)) matchesByDay[d].push(m);
   });
@@ -122,7 +143,7 @@ export default function PublicBoard({ matches, courses, players, teams }: Props)
 
       {/* --- Списки матчей по дням с бейджами LIVE!/FINAL RESULT --- */}
       {DAYS.map(day => {
-        const list = matchesByDay[day] || [];
+        const list = (matchesByDay[day] || []).filter(m => courseOf(m.courseId));
         const dayRow = rows.find(r => r.day===day);
         const dayTotalsA = dayRow?.a ?? 0;
         const dayTotalsB = dayRow?.b ?? 0;
@@ -141,7 +162,7 @@ export default function PublicBoard({ matches, courses, players, teams }: Props)
             <div className="content grid">
               {list.length===0 && <div className="muted">Нет матчей</div>}
               {list.map(m => {
-                const c = courseOf(m.courseId);
+                const c = courseOf(m.courseId)!;
                 const res = calcMatchPlayStatus(m, players, teams, c);
                 const pts = calcPoints(res.perHole);
                 const prog = matchProgress(m, players, teams, c);
