@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Admin from './components/Admin';
 import PublicBoard from './components/PublicBoard';
+import PlayersStats from './components/PlayersStats';
 import ScoringPage from './components/ScoringPage';
 import { Course, Match, Player, Team } from './types';
 import {
@@ -34,9 +35,11 @@ export default function App() {
   const route = useHashRoute();
 
   if (route.startsWith('/match/')) {
-    const id = route.split('/')[2];
+    const parts = route.split('/');
+    const id = parts[2];
+    const focusPlayerId = parts[3] === 'player' ? parts[4] : undefined;
     const readOnly = new URLSearchParams(window.location.search).get('view') === 'public';
-    return <MatchPage matchId={id} readOnlyParam={readOnly} />;
+    return <MatchPage matchId={id} readOnlyParam={readOnly} focusPlayerId={focusPlayerId} />;
   }
 
   // ------ auth ------
@@ -218,6 +221,18 @@ export default function App() {
         {TopBar}
         <div className="max-w-6xl mx-auto p-4">
           <Admin />
+        </div>
+      </>
+    );
+  }
+
+  if (route.startsWith('/players')) {
+    if (!hydrated) return Loading;
+    return (
+      <>
+        {TopBar}
+        <div className="max-w-6xl mx-auto p-4">
+          <PlayersStats matches={matches} courses={courses} players={players} teams={teams} />
         </div>
       </>
     );

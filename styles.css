@@ -90,7 +90,7 @@ a{ color:var(--brand); }
   .score-player-controls input{ width:72px; flex:0 0 auto; }
   .score-player-controls button{ flex:0 0 auto; }
 }
-.score-input-nav{ position:sticky; bottom:0; display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px; background:linear-gradient(180deg, rgba(245,247,251,.3), rgba(245,247,251,.95)); padding:12px 0 8px; backdrop-filter:blur(12px); z-index:5; }
+.score-input-nav{ position:sticky; bottom:0; display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; background:linear-gradient(180deg, rgba(245,247,251,.3), rgba(245,247,251,.95)); padding:12px 0 8px; backdrop-filter:blur(12px); z-index:5; }
 .score-input-nav button{ padding:14px 12px; border-radius:12px; border:1px solid #dfe4ef; background:#fff; font-weight:600; font-size:15px; cursor:pointer; }
 .score-input-nav button.primary{ background:var(--brand); border-color:var(--brand); color:#fff; }
 .score-input-nav button:disabled{ opacity:.5; cursor:not-allowed; }

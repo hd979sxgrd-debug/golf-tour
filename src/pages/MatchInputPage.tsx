@@ -69,6 +69,13 @@ export default function MatchInputPage({
 
   const aIds = expandSide(match.sideA, teams);
   const bIds = expandSide(match.sideB, teams);
+  const visibleIds: Record<'A' | 'B', string[]> = useMemo(
+    () => ({
+      A: focusPlayerId ? aIds.filter((id) => id === focusPlayerId) : aIds,
+      B: focusPlayerId ? bIds.filter((id) => id === focusPlayerId) : bIds,
+    }),
+    [focusPlayerId, aIds.join(','), bIds.join(',')]
+  );
 
   // singles — ВСЕГДА поигровочно; fourball — поигровочно, если >2 игроков на стороне
   const perPlayerMode =
@@ -79,11 +86,11 @@ export default function MatchInputPage({
   const firstUnfilledHole = useMemo(() => {
     for (let i=0;i<18;i++){
       if (perPlayerMode){
-        const aEmpty = aIds.some(pid => {
+        const aEmpty = visibleIds.A.some(pid => {
           const val = (match.playerScoresA?.[pid] ?? [])[i];
           return val == null;
         });
-        const bEmpty = bIds.some(pid => {
+        const bEmpty = visibleIds.B.some(pid => {
           const val = (match.playerScoresB?.[pid] ?? [])[i];
           return val == null;
         });
@@ -97,8 +104,8 @@ export default function MatchInputPage({
     return 18;
   }, [
     perPlayerMode,
-    aIds.join(','),
-    bIds.join(','),
+    visibleIds.A.join(','),
+    visibleIds.B.join(','),
     match.playerScoresA,
     match.playerScoresB,
     match.scoresA,
@@ -138,7 +145,7 @@ export default function MatchInputPage({
     return d;
   };
   const [draft, setDraft] = useState<Draft>(buildDraft(hole));
-  useEffect(()=>{ setDraft(buildDraft(hole)); }, [hole, match]);
+  useEffect(() => { setDraft(buildDraft(hole)); }, [hole, match, aIds.join(','), bIds.join(',')]);
 
   const updateTeam = (s: 'A' | 'B', v: number | null | -1) =>
     setDraft((prev) => ({ ...prev, [s]: { ...prev[s], team: v } }));
@@ -165,10 +172,10 @@ export default function MatchInputPage({
         }
       });
     };
-    collect(aIds, 'A');
-    collect(bIds, 'B');
+    collect(visibleIds.A, 'A');
+    collect(visibleIds.B, 'B');
     return list;
-  }, [aIds.join(','), bIds.join(','), allowance, course, hole, playerMap, sis]);
+  }, [visibleIds.A.join(','), visibleIds.B.join(','), allowance, course, hole, playerMap, sis]);
 
   // ——— сохранение текущей лунки
   const persistHole = async () => {
@@ -221,18 +228,15 @@ export default function MatchInputPage({
     setHole(h => Math.max(1, Math.min(18, h + dir)));
   };
 
-  const saveCurrentHole = async () => {
-    await persistHole();
-  };
-
   const isFirstHole = hole === 1;
   const isLastHole = hole === 18;
+  const nextLabel = isLastHole ? 'Готово' : 'Далее';
 
   // UI
   const renderPerPlayer = (s:'A'|'B') => {
     const ids = s==='A' ? aIds : bIds;
-    if (!ids.length) return null;
-    const rows = focusPlayerId && ids.includes(focusPlayerId) ? [focusPlayerId] : ids;
+    const rows = s==='A' ? visibleIds.A : visibleIds.B;
+    if (!ids.length || !rows.length) return null;
     const note = focusPlayerId && rows.length === 1 ? 'Индивидуальный ввод' : pluralPlayers(ids.length);
     return (
       <section key={s} className="score-side">
@@ -414,16 +418,13 @@ export default function MatchInputPage({
         <button type="button" onClick={() => go(-1)} disabled={isFirstHole || saving}>
           Назад
         </button>
-        <button type="button" onClick={saveCurrentHole} disabled={saving}>
-          Сохранить
-        </button>
-        <button type="button" className="primary" onClick={() => go(1)} disabled={isLastHole || saving}>
-          Далее
+        <button type="button" className="primary" onClick={() => go(1)} disabled={saving}>
+          {nextLabel}
         </button>
       </div>
 
       <div className="score-hint">
-        «—» — прочерк (в бэстболле игрок не учитывается, в сингле — лунка проиграна). Значения сохраняются кнопками ниже.
+        «—» — прочерк (в бэстболле игрок не учитывается, в сингле — лунка проиграна). Значения сохраняются автоматически при переходе между лунками.
       </div>
     </div>
   );
