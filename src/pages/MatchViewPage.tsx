@@ -15,11 +15,24 @@ const sideName=(side:MatchSide[], players:Player[], teams:Team[])=> expandSide(s
 type HoleRes='A'|'B'|'AS'|null;
 const labelUpDn=(n:number)=> (n===0?'AS': n>0?`${n}UP`:`${Math.abs(n)}DN`);
 
-/** нормализация из hole_scores, как в инпуте */
+/** универсальный нормализатор */
+function extractHoleTable(anyM: any): Array<any> {
+  if (Array.isArray(anyM.hole_scores)) return anyM.hole_scores;
+  if (Array.isArray(anyM.holeScores))  return anyM.holeScores;
+  if (Array.isArray(anyM.scores))      return anyM.scores;
+  if (Array.isArray(anyM.rows))        return anyM.rows;
+  for (const k of Object.keys(anyM)) {
+    const v = (anyM as any)[k];
+    if (Array.isArray(v) && v.length && typeof v[0] === 'object' && 'hole' in v[0] && 'side' in v[0]) {
+      return v as any[];
+    }
+  }
+  return [];
+}
+
 function normalizeMatchScores(m: Match): Match {
   const anyM: any = m as any;
-  const table: Array<{side:'A'|'B'; player_id: string|null; hole:number; gross:number|null; dash?:boolean}>
-    = anyM.hole_scores || anyM.holeScores || [];
+  const table = extractHoleTable(anyM);
   if (!table.length) return m;
 
   const scoresA = Array(18).fill(null) as (number|null)[];
@@ -28,14 +41,27 @@ function normalizeMatchScores(m: Match): Match {
   const pB: Record<string,(number|null)[]> = {};
 
   for (const row of table) {
-    const i = Math.max(1, Math.min(18, row.hole)) - 1;
-    const val: number|null = row.gross;
-    if (row.side === 'A') {
-      if (row.player_id) { if (!pA[row.player_id]) pA[row.player_id] = Array(18).fill(undefined) as any; pA[row.player_id][i] = val; }
-      else scoresA[i] = val;
+    const side: 'A'|'B' = (row.side || '').toUpperCase() === 'B' ? 'B' : 'A';
+    const pid = (row.player_id ?? row.playerId ?? row.player_key ?? row.playerKey ?? null) as string|null;
+    const hole = Math.max(1, Math.min(18, parseInt(String(row.hole),10))) - 1;
+    const isDash = Boolean(row.dash);
+    const grossVal = row.gross ?? row.score;
+    const gross: number|null = isDash ? null : (grossVal==null ? null : parseInt(String(grossVal),10));
+
+    if (side === 'A') {
+      if (pid) {
+        if (!pA[pid]) pA[pid] = Array(18).fill(undefined) as any;
+        pA[pid][hole] = gross;
+      } else {
+        scoresA[hole] = gross;
+      }
     } else {
-      if (row.player_id) { if (!pB[row.player_id]) pB[row.player_id] = Array(18).fill(undefined) as any; pB[row.player_id][i] = val; }
-      else scoresB[i] = val;
+      if (pid) {
+        if (!pB[pid]) pB[pid] = Array(18).fill(undefined) as any;
+        pB[pid][hole] = gross;
+      } else {
+        scoresB[hole] = gross;
+      }
     }
   }
   return { ...m, scoresA, scoresB, playerScoresA: pA, playerScoresB: pB };
@@ -105,7 +131,6 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
         .centerStatus .live{color:#b91c1c}
         .centerStatus .final{color:#111827}
         .rows{display:grid;grid-template-columns:1fr auto 1fr;gap:10px}
-        .row{display:contents}
         .midCell{display:flex;justify-content:center;align-items:center}
         .chip{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:999px;font-weight:700;font-size:15px;line-height:1}
         .chip-star{font-size:10px;margin-left:2px}
@@ -120,9 +145,9 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
       `}</style>
 
       <div className="hdr">
-        <div className="name">{aName}</div>
+        <div className="name">{sideName(match.sideA, players, teams)}</div>
         <div className="centerStatus"><div className={finished?'final': started?'live':''}>{finished?'FINAL RESULT': started?'LIVE!':'—'}</div></div>
-        <div className="name" style={{textAlign:'right'}}>{bName}</div>
+        <div className="name" style={{textAlign:'right'}}>{sideName(match.sideB, players, teams)}</div>
       </div>
 
       <div className="rows">
