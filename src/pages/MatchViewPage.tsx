@@ -35,9 +35,7 @@ const shotsOnHole = (ch: number, holeIdx: number, si?: (number|null)[]) => {
   if (ch > 36 && ch - 36 >= idx) s++;
   return s;
 };
-
 const stars = (n:number) => (n>=2?'**': n===1?'*':'');
-
 const expandSide = (side: MatchSide[], teams: Team[]) => {
   const ids: string[] = [];
   for (const s of side) {
@@ -49,94 +47,78 @@ const expandSide = (side: MatchSide[], teams: Team[]) => {
   }
   return Array.from(new Set(ids));
 };
-
 const sideName = (side: MatchSide[], players: Player[], teams: Team[]) =>
   expandSide(side, teams).map(id => players.find(p=>p.id===id)?.name ?? '—').join(' & ');
-
 type HoleRes = 'A'|'B'|'AS'|null;
 const labelUpDn = (n:number) => (n===0?'AS': n>0?`${n}UP`:`${Math.abs(n)}DN`);
 
-/** ===== small UI atoms (без Tailwind) ===== */
-
-function HoleChip({
-  value,
-  winner,
-  color,
-  star
+/** ===== atoms ===== */
+function Chip({
+  value, color, win, star
 }:{
-  value: number|string|null|undefined;
-  winner?: boolean;
-  color: 'red'|'blue'|'gray';
+  value:number|string|null|undefined;
+  color:'red'|'blue'|'gray';
+  win?:boolean;
   star?: ''|'*'|'**';
 }){
   return (
-    <span className={`chip chip-${color} ${winner?'chip-win':''}`}>
+    <span className={`chip chip-${color} ${win?'win':''}`}>
       {value ?? '—'}{star ? <sup className="chip-star">{star}</sup> : null}
     </span>
   );
 }
 
-/** ===== main component ===== */
-
+/** ===== main ===== */
 export default function MatchViewPage({
   match, course, players, teams
-}:{
-  match: Match;
-  course: Course;
-  players: Player[];
-  teams: Team[];
-}) {
+}:{ match:Match; course:Course; players:Player[]; teams:Team[] }){
 
   const aIds = expandSide(match.sideA, teams);
   const bIds = expandSide(match.sideB, teams);
+  const aName = sideName(match.sideA, players, teams);
+  const bName = sideName(match.sideB, players, teams);
+  const pars = safePars(course);
+  const siArr = safeSI(course);
+  const allow = match.format === 'singles' ? ALLOW_SINGLES : ALLOW_FOURBALL;
 
-  // перерасчёт нетто/лучшего на клиенте, если бэкенд не прислал готовые bestA/bestB
-  const { winners, aNet, bNet, aStars, bStars } = useMemo(() => {
-    const res: HoleRes[] = [];
-    const A: (number|null)[] = [];
-    const B: (number|null)[] = [];
-    const Astar: (''|'*'|'**')[] = [];
-    const Bstar: (''|'*'|'**')[] = [];
+  const { aNet, bNet, aStars, bStars, winners } = useMemo(()=>{
+    const A:(number|null)[]=[]; const B:(number|null)[]=[];
+    const Astar:(''|'*'|'**')[]=[]; const Bstar:(''|'*'|'**')[]=[];
+    const res:HoleRes[]=[];
 
-    const siArr = safeSI(course);
-    const allow = match.format === 'singles' ? ALLOW_SINGLES : ALLOW_FOURBALL;
-
-    for (let i = 0; i < 18; i++) {
-      // собрать кандидатов по стороне (персональные gross, прочерки пропускаем)
-      const sideBest = (ids: string[], store?: Record<string,(number|null)[]>, teamGross?: (number|null)[]) => {
-        const cands: Array<{net:number; star:''|'*'|'**'}> = [];
-        if (store && Object.keys(store).length) {
-          for (const pid of ids) {
-            const arr = store[pid];
-            const gross = Array.isArray(arr) ? arr[i] : null;
-            if (gross == null) continue;          // пусто/прочерк — не участвует
-            const hi = players.find(p=>p.id===pid)?.hcp ?? 0;
-            const ch = Math.round(toCourseHcp(hi, course) * allow);
-            const sh = shotsOnHole(ch, i, siArr);
-            cands.push({ net: gross - sh, star: stars(sh) });
-          }
-        } else if (teamGross) {
-          const g = teamGross[i];
-          if (g != null) cands.push({ net: g, star: '' });
+    const pickBest = (ids:string[], per?:Record<string,(number|null)[]>, teamGross?:(number|null)[])=>{
+      const cands: Array<{net:number; star:''|'*'|'**'}> = [];
+      if (per && Object.keys(per).length){
+        for (const pid of ids){
+          const g = per[pid]?.[i] ?? null;
+          if (g==null) continue;
+          const hi = players.find(p=>p.id===pid)?.hcp ?? 0;
+          const ch = Math.round(toCourseHcp(hi, course)*allow);
+          const sh = shotsOnHole(ch, i, siArr);
+          cands.push({ net: g - sh, star: stars(sh) });
         }
-        if (!cands.length) return { best:null as number|null, star:'' as ''|'*'|'**' };
-        const best = cands.reduce((m,x)=> x.net<m.net?x:m);
-        return { best: best.net, star: best.star };
-      };
+      } else if (teamGross){
+        const g = teamGross[i];
+        if (g!=null) cands.push({ net:g, star:'' });
+      }
+      if (!cands.length) return {best:null as number|null, star:'' as ''|'*'|'**'};
+      const best = cands.reduce((m,x)=> x.net<m.net?x:m);
+      return {best:best.net, star:best.star};
+    };
 
-      const Ares = sideBest(aIds, match.playerScoresA, match.scoresA);
-      const Bres = sideBest(bIds, match.playerScoresB, match.scoresB);
-
+    for (var i=0;i<18;i++){
+      const Ares = pickBest(aIds, match.playerScoresA, match.scoresA);
+      const Bres = pickBest(bIds, match.playerScoresB, match.scoresB);
       A.push(Ares.best); B.push(Bres.best);
       Astar.push(Ares.star); Bstar.push(Bres.star);
 
       if (Ares.best==null && Bres.best==null) res.push(null);
-      else if (Bres.best==null || (Ares.best!=null && Ares.best < Bres.best)) res.push('A');
-      else if (Ares.best==null || (Bres.best!=null && Bres.best < Ares.best)) res.push('B');
+      else if (Bres.best==null || (Ares.best!=null && Ares.best<Bres.best)) res.push('A');
+      else if (Ares.best==null || (Bres.best!=null && Bres.best<Ares.best)) res.push('B');
       else res.push('AS');
     }
-
-    return { winners: res, aNet: A, bNet: B, aStars: Astar, bStars: Bstar };
+    return { aNet:A, bNet:B, aStars:Astar, bStars:Bstar, winners:res };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.id, JSON.stringify(match.playerScoresA), JSON.stringify(match.playerScoresB), JSON.stringify(match.scoresA), JSON.stringify(match.scoresB), course.cr, course.slope]);
 
   const upFront = winners.slice(0,9).reduce((n,r)=> r==='A'?n+1: r==='B'?n-1:n, 0);
@@ -146,81 +128,94 @@ export default function MatchViewPage({
   const started  = winners.some(w=>w!==null);
   const finished = winners.every(w=>w!==null);
 
-  const aName = sideName(match.sideA, players, teams);
-  const bName = sideName(match.sideB, players, teams);
-  const pars   = safePars(course);
-
   return (
-    <div className="view-wrap">
-      {/* локальные стили */}
+    <div className="vw">
       <style>{`
-        .view-wrap{max-width:1060px;margin:0 auto;padding:12px;}
-        .hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px;}
-        .hdr-col{width:33.33%;}
-        .hdr-title{font-weight:700;font-size:14px;line-height:1.2}
-        .hdr-center{text-align:center}
-        .hdr-status{font-weight:800;font-size:18px;margin-bottom:4px}
-        .live{color:#b91c1c}
-        .final{color:#111827}
-        .grid3{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px}
-        .lane{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-start}
-        .lane.r{justify-content:flex-end}
-        .mid-col{display:flex;flex-direction:column;align-items:center;gap:8px}
-        .badge{border:1px solid #D1D5DB;border-radius:999px;padding:6px 14px;font-weight:600;font-size:13px}
-        .par-lane{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
-        .chip{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:999px;font-weight:700;font-size:14px;line-height:1}
+        .vw{max-width:860px;margin:0 auto;padding:12px}
+        .hdr{display:flex;align-items:flex-start;justify-content:space-between;margin:8px 0 12px}
+        .hdr .name{font-weight:700}
+        .centerStatus{text-align:center;font-weight:800}
+        .centerStatus .live{color:#b91c1c}
+        .centerStatus .final{color:#111827}
+        .rows{display:grid;grid-template-columns:1fr auto 1fr;gap:10px}
+        .row{display:contents}
+        .holeIdx{width:26px;text-align:center;color:#6b7280;font-size:12px}
+        .midCell{display:flex;justify-content:center;align-items:center}
+        .chip{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:999px;font-weight:700;font-size:15px;line-height:1}
         .chip-star{font-size:10px;margin-left:2px}
         .chip-gray{border:2px solid #D1D5DB;color:#6B7280;background:#fff}
         .chip-red{border:2px solid #DC2626;color:#B91C1C;background:#fff}
         .chip-blue{border:2px solid #2563EB;color:#1D4ED8;background:#fff}
-        .chip-win.chip-red{background:#DC2626;color:#fff}
-        .chip-win.chip-blue{background:#2563EB;color:#fff}
-        @media (min-width: 768px){
-          .hdr-title{font-size:18px}
-          .hdr-status{font-size:22px}
+        .chip.win.chip-red{background:#DC2626;color:#fff}
+        .chip.win.chip-blue{background:#2563EB;color:#fff}
+        .divider{grid-column:1/-1;display:flex;justify-content:center;align-items:center;margin:6px 0}
+        .badge{border:1px solid #D1D5DB;border-radius:999px;padding:6px 14px;font-weight:700;font-size:13px;margin:2px auto}
+        @media (min-width:768px){
           .chip{width:42px;height:42px;font-size:16px}
         }
       `}</style>
 
-      {/* верхняя строка с названиями и статусом */}
+      {/* заголовок */}
       <div className="hdr">
-        <div className="hdr-col"><div className="hdr-title">{aName}</div></div>
-        <div className="hdr-col hdr-center">
-          <div className={`hdr-status ${finished?'final': started?'live':''}`}>
-            {finished ? 'FINAL RESULT' : (started ? 'LIVE!' : '—')}
+        <div className="name">{aName}</div>
+        <div className="centerStatus">
+          <div className={finished?'final': started?'live':''}>
+            {finished ? 'FINAL RESULT' : started ? 'LIVE!' : '—'}
           </div>
         </div>
-        <div className="hdr-col" style={{textAlign:'right'}}><div className="hdr-title">{bName}</div></div>
+        <div className="name" style={{textAlign:'right'}}>{bName}</div>
       </div>
 
-      {/* три колонки: левая дорожка A, центр OUT/IN/TOT + par, правая дорожка B */}
-      <div className="grid3">
-        {/* A */}
-        <div className="lane">
-          {aNet.map((v,i)=>(
-            <HoleChip key={i} value={v} winner={winners[i]==='A'} color="red" star={aStars[i]} />
-          ))}
-        </div>
+      {/* FRONT 9: построчно A | PAR | B */}
+      <div className="rows">
+        {Array.from({length:9}).map((_,i)=>(
+          <React.Fragment key={i}>
+            <div className="row">
+              <div className="midCell" style={{justifyContent:'flex-start'}}>
+                <Chip value={aNet[i]} color="red" win={winners[i]==='A'} star={aStars[i]}/>
+              </div>
+              <div className="midCell"><Chip value={pars[i]} color="gray"/></div>
+              <div className="midCell" style={{justifyContent:'flex-end'}}>
+                <Chip value={bNet[i]} color="blue" win={winners[i]==='B'} star={bStars[i]}/>
+              </div>
+            </div>
+          </React.Fragment>
+        ))}
 
-        {/* CENTER */}
-        <div className="mid-col">
-          <div>OUT</div>
-          <div className="badge">{labelUpDn(upFront)}</div>
-          <div style={{marginTop:6}}>IN</div>
-          <div className="badge">{labelUpDn(upBack)}</div>
-          <div style={{marginTop:6}}>TOT</div>
-          <div className="badge">{labelUpDn(upTot)}</div>
-
-          <div className="par-lane">
-            {pars.map((p,i)=> <HoleChip key={i} value={p} color="gray" />)}
+        {/* OUT badge */}
+        <div className="divider">
+          <div style={{textAlign:'center'}}>
+            <div>OUT</div>
+            <div className="badge">{labelUpDn(upFront)}</div>
           </div>
         </div>
 
-        {/* B */}
-        <div className="lane r">
-          {bNet.map((v,i)=>(
-            <HoleChip key={i} value={v} winner={winners[i]==='B'} color="blue" star={bStars[i]} />
-          ))}
+        {/* BACK 9 */}
+        {Array.from({length:9}).map((_,k)=>{
+          const i = 9 + k;
+          return (
+            <React.Fragment key={i}>
+              <div className="row">
+                <div className="midCell" style={{justifyContent:'flex-start'}}>
+                  <Chip value={aNet[i]} color="red" win={winners[i]==='A'} star={aStars[i]}/>
+                </div>
+                <div className="midCell"><Chip value={pars[i]} color="gray"/></div>
+                <div className="midCell" style={{justifyContent:'flex-end'}}>
+                  <Chip value={bNet[i]} color="blue" win={winners[i]==='B'} star={bStars[i]}/>
+                </div>
+              </div>
+            </React.Fragment>
+          );
+        })}
+
+        {/* IN + TOT */}
+        <div className="divider">
+          <div style={{textAlign:'center'}}>
+            <div>IN</div>
+            <div className="badge">{labelUpDn(upBack)}</div>
+            <div style={{marginTop:6}}>TOT</div>
+            <div className="badge">{labelUpDn(upTot)}</div>
+          </div>
         </div>
       </div>
     </div>
