@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { Course, Match, MatchSide, Player, Team } from "../types";
+import { normalizeMatch } from "../utils";
 
 /* ——— helpers ——— */
 const ALLOW_SINGLES = 0.75;
@@ -15,58 +16,6 @@ const sideName=(side:MatchSide[], players:Player[], teams:Team[])=> expandSide(s
 type HoleRes='A'|'B'|'AS'|null;
 const labelUpDn=(n:number)=> (n===0?'AS': n>0?`${n}UP`:`${Math.abs(n)}DN`);
 
-/** универсальный нормализатор */
-function extractHoleTable(anyM: any): Array<any> {
-  if (Array.isArray(anyM.hole_scores)) return anyM.hole_scores;
-  if (Array.isArray(anyM.holeScores))  return anyM.holeScores;
-  if (Array.isArray(anyM.scores))      return anyM.scores;
-  if (Array.isArray(anyM.rows))        return anyM.rows;
-  for (const k of Object.keys(anyM)) {
-    const v = (anyM as any)[k];
-    if (Array.isArray(v) && v.length && typeof v[0] === 'object' && 'hole' in v[0] && 'side' in v[0]) {
-      return v as any[];
-    }
-  }
-  return [];
-}
-
-function normalizeMatchScores(m: Match): Match {
-  const anyM: any = m as any;
-  const table = extractHoleTable(anyM);
-  if (!table.length) return m;
-
-  const scoresA = Array(18).fill(null) as (number|null)[];
-  const scoresB = Array(18).fill(null) as (number|null)[];
-  const pA: Record<string,(number|null)[]> = {};
-  const pB: Record<string,(number|null)[]> = {};
-
-  for (const row of table) {
-    const side: 'A'|'B' = (row.side || '').toUpperCase() === 'B' ? 'B' : 'A';
-    const pid = (row.player_id ?? row.playerId ?? row.player_key ?? row.playerKey ?? null) as string|null;
-    const hole = Math.max(1, Math.min(18, parseInt(String(row.hole),10))) - 1;
-    const isDash = Boolean(row.dash);
-    const grossVal = row.gross ?? row.score;
-    const gross: number|null = isDash ? null : (grossVal==null ? null : parseInt(String(grossVal),10));
-
-    if (side === 'A') {
-      if (pid) {
-        if (!pA[pid]) pA[pid] = Array(18).fill(undefined) as any;
-        pA[pid][hole] = gross;
-      } else {
-        scoresA[hole] = gross;
-      }
-    } else {
-      if (pid) {
-        if (!pB[pid]) pB[pid] = Array(18).fill(undefined) as any;
-        pB[pid][hole] = gross;
-      } else {
-        scoresB[hole] = gross;
-      }
-    }
-  }
-  return { ...m, scoresA, scoresB, playerScoresA: pA, playerScoresB: pB };
-}
-
 /* маленькие атомы */
 function Chip({value,color,win,star}:{value:number|string|null|undefined;color:'red'|'blue'|'gray';win?:boolean;star?:''|'*'|'**';}){
   return <span className={`chip chip-${color} ${win?'win':''}`}>{value ?? '—'}{star?<sup className="chip-star">{star}</sup>:null}</span>;
@@ -75,7 +24,7 @@ function Chip({value,color,win,star}:{value:number|string|null|undefined;color:'
 export default function MatchViewPage({ match: rawMatch, course, players, teams }:{
   match:Match; course:Course; players:Player[]; teams:Team[];
 }){
-  const match = useMemo(()=>normalizeMatchScores(rawMatch), [rawMatch]);
+  const match = useMemo(()=>normalizeMatch(rawMatch), [rawMatch]);
 
   const aIds = expandSide(match.sideA, teams);
   const bIds = expandSide(match.sideB, teams);
@@ -132,6 +81,8 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
         .centerStatus .final{color:#111827}
         .rows{display:grid;grid-template-columns:1fr auto 1fr;gap:10px}
         .midCell{display:flex;justify-content:center;align-items:center}
+        .midCell-left{justify-content:flex-start}
+        .midCell-right{justify-content:flex-end}
         .chip{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:999px;font-weight:700;font-size:15px;line-height:1}
         .chip-star{font-size:10px;margin-left:2px}
         .chip-gray{border:2px solid #D1D5DB;color:#6B7280;background:#fff}
@@ -142,6 +93,15 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
         .divider{grid-column:1/-1;display:flex;justify-content:center;align-items:center;margin:6px 0}
         .badge{border:1px solid #D1D5DB;border-radius:999px;padding:6px 14px;font-weight:700;font-size:13px;margin:2px auto}
         @media (min-width:768px){ .chip{width:42px;height:42px;font-size:16px} }
+        @media (max-width:640px){
+          .vw{padding:8px}
+          .hdr{flex-direction:column;align-items:center;text-align:center;gap:6px}
+          .hdr .name{text-align:center}
+          .rows{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+          .midCell-left,.midCell-right{justify-content:center}
+          .chip{width:34px;height:34px;font-size:13px}
+          .badge{font-size:12px;padding:4px 12px}
+        }
       `}</style>
 
       <div className="hdr">
@@ -153,9 +113,9 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
       <div className="rows">
         {Array.from({length:9}).map((_,i)=>(
           <React.Fragment key={i}>
-            <div className="midCell" style={{justifyContent:'flex-start'}}><Chip value={aNet[i]} color="red" win={winners[i]==='A'} star={aStars[i]}/></div>
+            <div className="midCell midCell-left"><Chip value={aNet[i]} color="red" win={winners[i]==='A'} star={aStars[i]}/></div>
             <div className="midCell"><Chip value={safePars(course)[i]} color="gray"/></div>
-            <div className="midCell" style={{justifyContent:'flex-end'}}><Chip value={bNet[i]} color="blue" win={winners[i]==='B'} star={bStars[i]}/></div>
+            <div className="midCell midCell-right"><Chip value={bNet[i]} color="blue" win={winners[i]==='B'} star={bStars[i]}/></div>
           </React.Fragment>
         ))}
 
@@ -165,9 +125,9 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
           const i=9+k;
           return (
             <React.Fragment key={i}>
-              <div className="midCell" style={{justifyContent:'flex-start'}}><Chip value={aNet[i]} color="red" win={winners[i]==='A'} star={aStars[i]}/></div>
+              <div className="midCell midCell-left"><Chip value={aNet[i]} color="red" win={winners[i]==='A'} star={aStars[i]}/></div>
               <div className="midCell"><Chip value={safePars(course)[i]} color="gray"/></div>
-              <div className="midCell" style={{justifyContent:'flex-end'}}><Chip value={bNet[i]} color="blue" win={winners[i]==='B'} star={bStars[i]}/></div>
+              <div className="midCell midCell-right"><Chip value={bNet[i]} color="blue" win={winners[i]==='B'} star={bStars[i]}/></div>
             </React.Fragment>
           );
         })}

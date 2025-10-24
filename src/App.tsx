@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Admin from './components/Admin';
 import PublicBoard from './components/PublicBoard';
+import PlayersStats from './components/PlayersStats';
 import ScoringPage from './components/ScoringPage';
 import { Course, Match, Player, Team } from './types';
 import {
@@ -11,6 +12,7 @@ import {
   apiDeleteMatch,
 } from './api';
 import MatchPage from './pages/MatchPage';
+import { normalizeMatch, normalizeMatches } from './utils';
 
 // ...
 function useHashRoute(){
@@ -33,9 +35,11 @@ export default function App() {
   const route = useHashRoute();
 
   if (route.startsWith('/match/')) {
-    const id = route.split('/')[2];
+    const parts = route.split('/');
+    const id = parts[2];
+    const focusPlayerId = parts[3] === 'player' ? parts[4] : undefined;
     const readOnly = new URLSearchParams(window.location.search).get('view') === 'public';
-    return <MatchPage matchId={id} readOnlyParam={readOnly} />;
+    return <MatchPage matchId={id} readOnlyParam={readOnly} focusPlayerId={focusPlayerId} />;
   }
 
   // ------ auth ------
@@ -62,7 +66,7 @@ export default function App() {
     setPlayers(data.players);
     setTeams(data.teams as any);
     setCourses(data.courses);
-    setMatches(data.matches);
+    setMatches(normalizeMatches(data.matches));
     setHydrated(true);
   };
   useEffect(() => { loadAll().catch(console.error); }, []);
@@ -93,7 +97,7 @@ export default function App() {
     if ((parsed.mode === 'match' || parsed.mode === 'view') && parsed.matchId) {
       // ЗАГРУЗКА МАТЧА + hole_scores
       apiGetMatchWithScores(parsed.matchId)
-        .then(({ match, course }) => setMatchDetail({ match, course }))
+        .then(({ match, course }) => setMatchDetail({ match: normalizeMatch(match), course }))
         .catch(err => {
           console.error(err);
           setMatchDetail(null);
@@ -102,7 +106,7 @@ export default function App() {
       // polling для LIVE
       const t = window.setInterval(() => {
         apiGetMatchWithScores(parsed.matchId!)
-          .then(({ match, course }) => setMatchDetail({ match, course }))
+          .then(({ match, course }) => setMatchDetail({ match: normalizeMatch(match), course }))
           .catch(() => {});
       }, parsed.mode === 'match' ? 4000 : 5000);
       setPollTimer(t as unknown as number);
@@ -120,8 +124,14 @@ export default function App() {
         <a href="#/public" className="font-bold">Golf Scorer</a>
         <div className="flex items-center gap-2">
           <a className="btn" href="#/public">Публичная</a>
-          <a className="btn" href="#/admin">Админка</a>
-          {isAdmin ? <button className="btn" onClick={doLogout}>Выйти</button> : <a className="btn" href="#/login">Войти</a>}
+          {isAdmin ? (
+            <>
+              <span className="chip">Администратор</span>
+              <button className="btn" onClick={doLogout}>Выйти</button>
+            </>
+          ) : (
+            <a className="btn" href="#/login">Войти</a>
+          )}
         </div>
       </div>
     </div>
@@ -211,6 +221,18 @@ export default function App() {
         {TopBar}
         <div className="max-w-6xl mx-auto p-4">
           <Admin />
+        </div>
+      </>
+    );
+  }
+
+  if (route.startsWith('/players')) {
+    if (!hydrated) return Loading;
+    return (
+      <>
+        {TopBar}
+        <div className="max-w-6xl mx-auto p-4">
+          <PlayersStats matches={matches} courses={courses} players={players} teams={teams} />
         </div>
       </>
     );

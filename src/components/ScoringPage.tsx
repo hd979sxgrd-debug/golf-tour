@@ -1,8 +1,9 @@
 // src/components/ScoringPage.tsx
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Course, Match, Player, Team } from '../types';
 import MatchInputPage from '../pages/MatchInputPage';
 import MatchViewPage from '../pages/MatchViewPage';
+import { normalizeMatch } from '../utils';
 
 type CommonProps = {
   match: Match;
@@ -31,12 +32,14 @@ type ViewProps = {
 export default function ScoringPage(
   props: CommonProps & (InputProps | ViewProps)
 ) {
+  const { match, course, players, teams } = props;
+  const normalizedMatch = useMemo(() => normalizeMatch(match), [match]);
+
   // Если readOnly=true — это страница просмотра
   if ('readOnly' in props && props.readOnly) {
-    const { match, course, players, teams } = props;
     return (
       <MatchViewPage
-        match={match}
+        match={normalizedMatch}
         course={course}
         players={players}
         teams={teams}
@@ -46,10 +49,6 @@ export default function ScoringPage(
 
   // Иначе — страница ввода результатов
   const {
-    match,
-    course,
-    players,
-    teams,
     focusPlayerId,
     onScore,
     refetch,
@@ -68,7 +67,7 @@ export default function ScoringPage(
 
   return (
     <MatchInputPage
-      match={match}
+      match={normalizedMatch}
       course={course}
       players={players}
       teams={teams}

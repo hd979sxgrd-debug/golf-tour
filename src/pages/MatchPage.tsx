@@ -3,7 +3,7 @@ import { apiBootstrap, apiGetMatch, apiSubmitScore } from '../api';
 import { Course, Match, Player, Team } from '../types';
 import ScoringPage from '../components/ScoringPage';
 
-export default function MatchPage({ matchId, readOnlyParam }: { matchId: string; readOnlyParam?: boolean }) {
+export default function MatchPage({ matchId, readOnlyParam, focusPlayerId }: { matchId: string; readOnlyParam?: boolean; focusPlayerId?: string }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,8 +88,9 @@ export default function MatchPage({ matchId, readOnlyParam }: { matchId: string;
           players={players}
           teams={teams}
           readOnly={readOnly}
+          focusPlayerId={focusPlayerId}
           onScore={readOnly ? undefined : onScore}
-          afterPersist={readOnly ? undefined : refetch}
+          refetch={readOnly ? undefined : refetch}
         />
       </div>
     </div>
