@@ -121,8 +121,14 @@ export default function App() {
         <a href="#/public" className="font-bold">Golf Scorer</a>
         <div className="flex items-center gap-2">
           <a className="btn" href="#/public">Публичная</a>
-          <a className="btn" href="#/admin">Админка</a>
-          {isAdmin ? <button className="btn" onClick={doLogout}>Выйти</button> : <a className="btn" href="#/login">Войти</a>}
+          {isAdmin ? (
+            <>
+              <span className="chip">Администратор</span>
+              <button className="btn" onClick={doLogout}>Выйти</button>
+            </>
+          ) : (
+            <a className="btn" href="#/login">Войти</a>
+          )}
         </div>
       </div>
     </div>
