@@ -37,11 +37,26 @@ const expandSide = (side: MatchSide[], teams: Team[]) => {
 const nameOfSide = (side: MatchSide[], players: Player[], teams: Team[]) =>
   expandSide(side, teams).map(id => players.find(p=>p.id===id)?.name ?? "—").join(" & ");
 
-/** Собираем playerScoresA/B и командные scoresA/B из ответа БД (hole_scores) */
+/** ===== универсальный нормализатор ответа матча ===== */
+function extractHoleTable(anyM: any): Array<any> {
+  // Явные ключи
+  if (Array.isArray(anyM.hole_scores)) return anyM.hole_scores;
+  if (Array.isArray(anyM.holeScores))  return anyM.holeScores;
+  if (Array.isArray(anyM.scores))      return anyM.scores;
+  if (Array.isArray(anyM.rows))        return anyM.rows;
+  // Поиск первого массива объектов с полями side+hole
+  for (const k of Object.keys(anyM)) {
+    const v = (anyM as any)[k];
+    if (Array.isArray(v) && v.length && typeof v[0] === 'object' && 'hole' in v[0] && 'side' in v[0]) {
+      return v as any[];
+    }
+  }
+  return [];
+}
+
 function normalizeMatchScores(m: Match): Match {
   const anyM: any = m as any;
-  const table: Array<{side:'A'|'B'; player_id: string|null; hole:number; gross:number|null; dash?:boolean}>
-    = anyM.hole_scores || anyM.holeScores || [];
+  const table = extractHoleTable(anyM);
 
   if (!table.length) return m;
 
@@ -51,21 +66,26 @@ function normalizeMatchScores(m: Match): Match {
   const pB: Record<string,(number|null)[]> = {};
 
   for (const row of table) {
-    const i = Math.max(1, Math.min(18, row.hole)) - 1;
-    const val: number|null = row.gross;              // dash=true => gross=null
-    if (row.side === 'A') {
-      if (row.player_id) {
-        if (!pA[row.player_id]) pA[row.player_id] = Array(18).fill(undefined) as any;
-        pA[row.player_id][i] = val;
+    const side: 'A'|'B' = (row.side || '').toUpperCase() === 'B' ? 'B' : 'A';
+    const pid = (row.player_id ?? row.playerId ?? row.player_key ?? row.playerKey ?? null) as string|null;
+    const hole = Math.max(1, Math.min(18, parseInt(String(row.hole),10))) - 1;
+    const isDash = Boolean(row.dash);
+    const grossVal = row.gross ?? row.score;
+    const gross: number|null = isDash ? null : (grossVal==null ? null : parseInt(String(grossVal),10));
+
+    if (side === 'A') {
+      if (pid) {
+        if (!pA[pid]) pA[pid] = Array(18).fill(undefined) as any;
+        pA[pid][hole] = gross;
       } else {
-        scoresA[i] = val;
+        scoresA[hole] = gross;
       }
     } else {
-      if (row.player_id) {
-        if (!pB[row.player_id]) pB[row.player_id] = Array(18).fill(undefined) as any;
-        pB[row.player_id][i] = val;
+      if (pid) {
+        if (!pB[pid]) pB[pid] = Array(18).fill(undefined) as any;
+        pB[pid][hole] = gross;
       } else {
-        scoresB[i] = val;
+        scoresB[hole] = gross;
       }
     }
   }
@@ -91,12 +111,12 @@ export default function MatchInputPage({
   const aIds = expandSide(match.sideA, teams);
   const bIds = expandSide(match.sideB, teams);
 
-  // ⬅️ FIX: singles всегда поигровочно → будет playerId (не null)
+  // singles — ВСЕГДА поигровочно; fourball — поигровочно, если >2 игроков на стороне
   const perPlayerMode =
     match.format === "singles" ||
     (match.format === "fourball" && (aIds.length > 2 || bIds.length > 2));
 
-  // ——— первая НЕЗАПОЛНЕННАЯ лунка: undefined = пусто; null = прочерк (считаем ЗАПОЛНЕНО)
+  // первая НЕЗАПОЛНЕННАЯ лунка (undefined — пусто; null — прочерк = заполнено)
   const firstUnfilledHole = useMemo(() => {
     for (let i=0;i<18;i++){
       if (perPlayerMode){
@@ -141,7 +161,11 @@ export default function MatchInputPage({
   const updateTeam = (s:'A'|'B', v:number|null| -1) =>
     setDraft(prev => ({ ...prev, [s]: { ...prev[s], team: v }}));
   const updatePlayer = (s:'A'|'B', pid:string, v:number|null| -1) =>
-    setDraft(prev => ({ ...prev, [s]: { ...prev[s], players: { ...prev[s].players, [pid]: v } }}));
+    setDraft(prev => ({ ...prev, [s]: { ...prev[s].players, [pid]: v }, players: { ...prev[s].players, [pid]: v }} as any));
+
+  // аккуратно: не использовать setDraft с неправильным ключом
+  const updatePlayerSafe = (s:'A'|'B', pid:string, v:number|null| -1) =>
+    setDraft(prev => ({ ...prev, [s]: { ...prev[s], players: { ...prev[s].players, [pid]: v }}}));
 
   // ——— сохранение текущей лунки
   const persistHole = async () => {
@@ -156,7 +180,6 @@ export default function MatchInputPage({
     };
 
     if (perPlayerMode){
-      // singles → по одному pid в каждой стороне; fourball 5v5 → много pid
       for (const pid of aIds) {
         if (focusPlayerId && pid !== focusPlayerId) continue;
         const prev = (match.playerScoresA?.[pid] ?? [])[i];
@@ -170,7 +193,6 @@ export default function MatchInputPage({
         if (curr !== prev) tasks.push(send('B', pid, curr));
       }
     } else {
-      // fourball 2v2 (командой) → playerId = null
       const prevA = (match.scoresA || [])[i];
       const prevB = (match.scoresB || [])[i];
       if (draft.A.team !== prevA) tasks.push(send('A', null, draft.A.team));
@@ -196,24 +218,24 @@ export default function MatchInputPage({
           const pl = players.find(p=>p.id===pid);
           const hi = toCourseHcp(pl?.hcp, course);
           const allow = match.format==='singles'?ALLOW_SINGLES:ALLOW_FOURBALL;
-          const sh = shotsOnHole(Math.round(hi*allow), hole-1, sis);
+          const sh = shotsOnHole(Math.round(hi*allow), hole-1, safeSI(course));
           const v = draft[s].players[pid] ?? null;
           return (
             <div key={pid} className="flex items-center gap-2">
               <div className="w-36 text-sm truncate">{pl?.name ?? 'Игрок'} <span className="text-xs text-gray-500">{stars(sh)}</span></div>
-              <button className="px-3 py-2 border rounded" onClick={()=>updatePlayer(s,pid, typeof v==='number' && v>1 ? v-1 : 1)}>−</button>
+              <button className="px-3 py-2 border rounded" onClick={()=>updatePlayerSafe(s,pid, typeof v==='number' && v>1 ? v-1 : 1)}>−</button>
               <input className="w-16 text-center border rounded py-2"
                 inputMode="numeric"
                 value={v===-1? '' : (v ?? '')}
                 placeholder="-"
                 onChange={(e)=>{
                   const t = e.target.value.trim();
-                  if (t==='') { updatePlayer(s,pid, null); return; }
-                  const n = parseInt(t,10); if (!Number.isNaN(n)) updatePlayer(s,pid, n);
+                  if (t==='') { updatePlayerSafe(s,pid, null); return; }
+                  const n = parseInt(t,10); if (!Number.isNaN(n)) updatePlayerSafe(s,pid, n);
                 }}
               />
-              <button className="px-3 py-2 border rounded" onClick={()=>updatePlayer(s,pid, typeof v==='number' ? v+1 : 1)}>+</button>
-              <button className={`px-3 py-2 border rounded ${v===-1?'bg-gray-100':''}`} onClick={()=>updatePlayer(s,pid, -1)} title="Прочерк">—</button>
+              <button className="px-3 py-2 border rounded" onClick={()=>updatePlayerSafe(s,pid, typeof v==='number' ? v+1 : 1)}>+</button>
+              <button className={`px-3 py-2 border rounded ${v===-1?'bg-gray-100':''}`} onClick={()=>updatePlayerSafe(s,pid, -1)} title="Прочерк">—</button>
             </div>
           );
         })}
@@ -266,20 +288,9 @@ export default function MatchInputPage({
 
       {perPlayerMode ? (
         <>
-          {/* в 5v5 без focus — таб «A/B»; в singles игроков по одному — список и так короткий */}
-          {match.format==='fourball' && (aIds.length>2 || bIds.length>2) && !focusPlayerId && (
-            <div className="flex gap-2 mb-3">
-              <button className={`px-3 py-1 border rounded ${side==='A'?'bg-red-50 border-red-400':''}`} onClick={()=>setSide('A')}>A</button>
-              <button className={`px-3 py-1 border rounded ${side==='B'?'bg-blue-50 border-blue-400':''}`} onClick={()=>setSide('B')}>B</button>
-            </div>
-          )}
-          {renderPerPlayer(match.format==='fourball' && (aIds.length>2 || bIds.length>2) && !focusPlayerId ? side : 'A')}
-          {match.format==='fourball' && (aIds.length>2 || bIds.length>2) && !focusPlayerId && side==='A' ? null : null}
-          {/* если нужен одновременно показ B при singles — можно вывести обе секции:
-              {renderPerPlayer('A')}{renderPerPlayer('B')} */}
-          {match.format==='singles' && (
-            <div className="mt-3">{renderPerPlayer('B')}</div>
-          )}
+          {renderPerPlayer('A')}
+          <div className="my-2" />
+          {renderPerPlayer('B')}
         </>
       ) : renderTeam()}
 
