@@ -1,89 +1,132 @@
-import { Course, Match, MatchFormat, Player, Team } from './types';
+// src/api.ts
+export type ApiMatchResp = {
+  match: any;
+  course: any;
+  hole_scores?: any[];
+  holeScores?: any[];
+};
 
-const base = '';
+const base = '/.netlify/functions';
 
-async function json<T>(res: Response): Promise<T> {
+async function http<T = any>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, { credentials: 'omit', ...init });
   if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`HTTP ${res.status}: ${txt}`);
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text}`);
   }
-  return res.json();
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('application/json')) return (await res.json()) as T;
+  return undefined as unknown as T;
 }
 
-/** Если залогинен админ – добавляем Basic auth admin:belek2025! */
-function adminAuthHeaders(): Record<string, string> {
-  try {
-    const role = localStorage.getItem('role');
-    if (role === 'admin') {
-      const token = btoa('admin:belek2025!');
-      return { Authorization: `Basic ${token}` };
-    }
-  } catch {}
-  return {};
-}
+/* ---------- bootstrap / matches ---------- */
 
 export async function apiBootstrap() {
-  return json<{ players: Player[]; teams: Team[]; courses: Course[]; matches: Match[] }>(
-    await fetch(`${base}/.netlify/functions/bootstrap`, { method: 'GET' })
+  return http<{ players:any[]; teams:any[]; courses:any[]; matches:any[] }>(
+    `${base}/bootstrap`
   );
 }
 
-export async function apiCreateMatch(payload: {
-  id: string; name: string; day: string; format: MatchFormat; courseId: string;
-  sideATeamId?: string; sideBTeamId?: string; sideAPlayerIds: string[]; sideBPlayerIds: string[];
-}) {
-  return json(await fetch(`${base}/.netlify/functions/match_create`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...adminAuthHeaders() },
-    body: JSON.stringify(payload)
-  }));
-}
-
-export async function apiDeleteMatch(id: string) {
-  return json(await fetch(`${base}/.netlify/functions/match_delete?id=${encodeURIComponent(id)}`, {
-    method: 'POST',
-    headers: { ...adminAuthHeaders() }
-  }));
-}
-
-export async function apiGetMatch(id: string) {
-  return json<{ match: Match; course: Course }>(
-    await fetch(`${base}/.netlify/functions/match?id=${encodeURIComponent(id)}`)
-  );
-}
-
-export async function apiSubmitScore(payload: {
-  matchId: string; side: 'A'|'B'; hole: number; playerId?: string | null; gross?: number | null; dash?: boolean;
-}) {
-  return json(await fetch(`${base}/.netlify/functions/score`, {
+export async function apiCreateMatch(payload: any) {
+  return http(`${base}/match_create`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
-  }));
+  });
 }
 
-/* --------- upsert для игроков/команд/полей --------- */
-
-export async function apiUpsertPlayer(p: { id?: string; name: string; hcp?: number }) {
-  return json(await fetch(`${base}/.netlify/functions/players_upsert`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...adminAuthHeaders() },
-    body: JSON.stringify(p),
-  }));
+export async function apiDeleteMatch(id: string) {
+  return http(`${base}/match_delete?id=${encodeURIComponent(id)}`, { method: 'POST' });
 }
 
-export async function apiUpsertTeam(t: { id?: string; name: string; playerIds: string[] }) {
-  return json(await fetch(`${base}/.netlify/functions/teams_upsert`, {
+export async function apiSubmitScore(payload: {
+  matchId: string;
+  hole: number;
+  side: 'A' | 'B';
+  playerId: string | null; // важно: не undefined
+  gross: number | null;
+  dash: boolean;
+}) {
+  return http(`${base}/score`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...adminAuthHeaders() },
-    body: JSON.stringify(t),
-  }));
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
 }
 
-export async function apiUpsertCourse(c: Course) {
-  return json(await fetch(`${base}/.netlify/functions/courses_upsert`, {
+/**
+ * Получить матч + курс + гарантированно hole_scores.
+ * Даже если /match не отдаёт лунки, подтянем их отдельным запросом /score?matchId=...
+ */
+export async function apiGetMatchWithScores(matchId: string): Promise<{
+  match: any & { hole_scores?: any[] };
+  course: any;
+}> {
+  const basic = await http<ApiMatchResp>(`${base}/match?id=${encodeURIComponent(matchId)}`);
+
+  const hasTable =
+    (Array.isArray((basic as any).hole_scores) && (basic as any).hole_scores.length > 0) ||
+    (Array.isArray((basic as any).holeScores) && (basic as any).holeScores.length > 0);
+
+  if (hasTable) {
+    const hole_scores = (basic as any).hole_scores ?? (basic as any).holeScores;
+    return {
+      match: { ...basic.match, hole_scores },
+      course: basic.course,
+    };
+  }
+
+  // fallback: дотягиваем /score
+  let hole_scores: any[] = [];
+  try {
+    const scorePayload = await http<{ rows?: any[]; hole_scores?: any[]; data?: any[] }>(
+      `${base}/score?matchId=${encodeURIComponent(matchId)}`
+    );
+    if (Array.isArray((scorePayload as any).hole_scores)) {
+      hole_scores = (scorePayload as any).hole_scores!;
+    } else if (Array.isArray((scorePayload as any).rows)) {
+      hole_scores = (scorePayload as any).rows!;
+    } else if (Array.isArray((scorePayload as any).data)) {
+      hole_scores = (scorePayload as any).data!;
+    }
+  } catch {
+    // ок — значит публичного списка лунок нет
+  }
+
+  return {
+    match: { ...basic.match, hole_scores },
+    course: basic.course,
+  };
+}
+
+/** Обёртка для совместимости: старый код импортирует apiGetMatch */
+export async function apiGetMatch(matchId: string) {
+  return apiGetMatchWithScores(matchId);
+}
+
+/* ---------- admin upserts ---------- */
+
+export async function apiUpsertPlayer(payload: any) {
+  return http(`${base}/players_upsert`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...adminAuthHeaders() },
-    body: JSON.stringify(c),
-  }));
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiUpsertTeam(payload: any) {
+  return http(`${base}/teams_upsert`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiUpsertCourse(payload: any) {
+  // вы переименовали функцию на courses_upsert — используем правильный путь
+  return http(`${base}/courses_upsert`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
 }
