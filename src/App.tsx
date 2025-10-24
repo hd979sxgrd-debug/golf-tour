@@ -4,8 +4,10 @@ import PublicBoard from './components/PublicBoard';
 // ScoringPage не используется напрямую здесь — им занимается MatchPage
 // import ScoringPage from './components/ScoringPage';
 import { Course, Match, Player, Team } from './types';
-import { apiBootstrap } from './api';
 import MatchPage from './pages/MatchPage';
+import MatchInputPage from './pages/MatchInputPage';
+import MatchViewPage  from './pages/MatchViewPage';
+import { apiBootstrap, apiGetMatch, apiSubmitScore } from './api';
 
 // ------ simple hash router ------
 function useHashRoute() {
@@ -101,31 +103,56 @@ export default function App() {
     );
   }
 
-  // /match/:id  — страница ввода (редактируемая)
-  if (route.startsWith('/match/')) {
-    const id = route.split('/')[2]; // /match/<id>
-    return (
-      <>
-        {TopBar}
-        <div className="max-w-5xl mx-auto p-3 md:p-6">
-          <MatchPage matchId={id} readOnlyParam={false} />
-        </div>
-      </>
-    );
-  }
+// /match/:id — ВВОД
+if (route.startsWith('/match/')) {
+  const id = route.split('/')[2];
 
-  // /view/:id  — публичный просмотр (read-only)
-  if (route.startsWith('/view/')) {
-    const id = route.split('/')[2]; // /view/<id>
-    return (
-      <>
-        {TopBar}
-        <div className="max-w-5xl mx-auto p-3 md:p-6">
-          <MatchPage matchId={id} readOnlyParam={true} />
-        </div>
-      </>
-    );
-  }
+  const [detail, setDetail] = React.useState<{ match: Match; course: Course } | null>(null);
+  React.useEffect(()=>{ apiGetMatch(id).then(setDetail).catch(()=>setDetail(null)); }, [id]);
+
+  const refetch = async () => { const d = await apiGetMatch(id); setDetail(d); };
+
+  if (!detail) return Loading;
+  return (
+    <>
+      {TopBar}
+      <div className="max-w-4xl mx-auto p-2">
+        <MatchInputPage
+          match={detail.match}
+          course={detail.course}
+          players={players}
+          teams={teams}
+          onScore={(p)=>apiSubmitScore({ matchId: detail.match.id, ...p })}
+          refetch={refetch}
+          // для персональной ссылки: /match/:id/player/:pid
+          focusPlayerId={(route.split('/')[3]==='player')? route.split('/')[4] : undefined}
+        />
+      </div>
+    </>
+  );
+}
+
+// /view/:id — ПРОСМОТР
+if (route.startsWith('/view/')) {
+  const id = route.split('/')[2];
+  const [detail, setDetail] = React.useState<{ match: Match; course: Course } | null>(null);
+  React.useEffect(()=>{ apiGetMatch(id).then(setDetail).catch(()=>setDetail(null)); }, [id]);
+
+  if (!detail) return Loading;
+  return (
+    <>
+      {TopBar}
+      <div className="max-w-5xl mx-auto p-2">
+        <MatchViewPage
+          match={detail.match}
+          course={detail.course}
+          players={players}
+          teams={teams}
+        />
+      </div>
+    </>
+  );
+}
 
   // /admin
   if (route.startsWith('/admin')) {
