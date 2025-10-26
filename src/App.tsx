@@ -13,6 +13,12 @@ import {
 } from './api';
 import MatchPage from './pages/MatchPage';
 import { normalizeMatch, normalizeMatches } from './utils';
+import {
+  ADMIN_USERNAME,
+  ADMIN_PASSWORD,
+  storeAdminAuthToken,
+  clearAdminAuthToken,
+} from './auth';
 
 // ...
 function useHashRoute(){
@@ -46,13 +52,21 @@ export default function App() {
   const [role, setRoleState] = useState<string>(getRole());
   const isAdmin = role === 'admin';
   const doLogin = (u: string, p: string) => {
-    if (u === 'admin' && p === 'belek2025!') {
-      setRole('admin'); setRoleState('admin'); window.location.hash = '#/admin';
+    if (u === ADMIN_USERNAME && p === ADMIN_PASSWORD) {
+      storeAdminAuthToken();
+      setRole('admin');
+      setRoleState('admin');
+      window.location.hash = '#/admin';
     } else {
       alert('Неверный логин/пароль');
     }
   };
-  const doLogout = () => { setRole('viewer'); setRoleState('viewer'); window.location.hash = '#/public'; };
+  const doLogout = () => {
+    clearAdminAuthToken();
+    setRole('viewer');
+    setRoleState('viewer');
+    window.location.hash = '#/public';
+  };
 
   // ------ bootstrap from API ------
   const [players, setPlayers] = useState<Player[]>([]);
@@ -155,16 +169,17 @@ export default function App() {
           <div className="content" style={{ display: 'grid', gap: 8 }}>
             <input className="input" placeholder="Логин" onChange={(e) => ((window as any).__u = e.target.value)} />
             <input className="input" placeholder="Пароль" type="password" onChange={(e) => ((window as any).__p = e.target.value)} />
-            <button className="btn primary" onClick={() => {
-              const u = (window as any).__u || '';
-              const p = (window as any).__p || '';
-              if (u === 'admin' && p === 'belek2025!') {
-                setRole('admin'); setRoleState('admin'); window.location.hash = '#/admin';
-              } else {
-                alert('Неверный логин/пароль');
-              }
-            }}>Войти</button>
-            <div className="muted" style={{ fontSize: 12 }}>admin / belek2025!</div>
+            <button
+              className="btn primary"
+              onClick={() => {
+                const u = (window as any).__u || '';
+                const p = (window as any).__p || '';
+                doLogin(u, p);
+              }}
+            >
+              Войти
+            </button>
+            <div className="muted" style={{ fontSize: 12 }}>{ADMIN_USERNAME} / {ADMIN_PASSWORD}</div>
           </div>
         </div>
       </div>

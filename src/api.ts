@@ -6,10 +6,18 @@ export type ApiMatchResp = {
   holeScores?: any[];
 };
 
+import { getAdminAuthToken } from './auth';
+
 const base = '/.netlify/functions';
 
 async function http<T = any>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { credentials: 'omit', ...init });
+  const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+  const adminToken = getAdminAuthToken();
+  if (adminToken && !headers.has('authorization')) {
+    headers.set('authorization', `Basic ${adminToken}`);
+  }
+
+  const res = await fetch(url, { ...init, credentials: 'omit', headers });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`HTTP ${res.status}: ${text}`);
@@ -36,7 +44,7 @@ export async function apiCreateMatch(payload: any) {
 }
 
 export async function apiDeleteMatch(id: string) {
-  return http(`${base}/match_delete?id=${encodeURIComponent(id)}`, { method: 'POST' });
+  return http(`${base}/match_delete?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export async function apiSubmitScore(payload: {

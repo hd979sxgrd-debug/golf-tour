@@ -7,7 +7,7 @@ export function cors(originEnv?: string) {
   return {
     'access-control-allow-origin': origin,
     'access-control-allow-headers': 'content-type,authorization',
-    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
   };
 }
 
