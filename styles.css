@@ -71,6 +71,9 @@ a{ color:var(--brand); }
 .score-side-title{ font-size:16px; font-weight:600; }
 .score-side-note{ font-size:12px; color:var(--muted); }
 .score-side-body{ display:flex; flex-direction:column; }
+.score-side-footer{ border-top:1px solid #f1f4ff; padding-top:8px; display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+.score-side-best-label{ font-weight:600; color:var(--text); }
+.score-side-best-meta{ color:var(--muted); }
 .score-player-row{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:10px 0; border-top:1px solid #f1f4ff; }
 .score-player-row:first-child{ border-top:none; padding-top:0; }
 .score-player-info{ flex:1; min-width:0; }

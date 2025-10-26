@@ -51,6 +51,14 @@ const pluralPlayers = (count: number) => {
   return `${count} игроков`;
 };
 
+const pluralShots = (count: number) => {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'удар';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'удара';
+  return 'ударов';
+};
+
 /* ---------- component ---------- */
 type Props = {
   match: Match;
@@ -77,10 +85,10 @@ export default function MatchInputPage({
     [focusPlayerId, aIds.join(','), bIds.join(',')]
   );
 
-  // singles — ВСЕГДА поигровочно; fourball — поигровочно, если >2 игроков на стороне
+  // singles — всегда поигровочно; fourball (бэст болл) — тоже поигровочно
   const perPlayerMode =
     match.format === "singles" ||
-    (match.format === "fourball" && (aIds.length > 2 || bIds.length > 2));
+    match.format === "fourball";
 
   // первая НЕЗАПОЛНЕННАЯ лунка (undefined — пусто; null — прочерк = заполнено)
   const firstUnfilledHole = useMemo(() => {
@@ -177,6 +185,35 @@ export default function MatchInputPage({
     return list;
   }, [visibleIds.A.join(','), visibleIds.B.join(','), allowance, course, hole, playerMap, sis]);
 
+  const bestBySide = useMemo(() => {
+    const compute = (ids: string[], side: 'A' | 'B') => {
+      let best: { playerId: string; gross: number; net: number; strokes: number } | null = null;
+      ids.forEach((pid) => {
+        const value = draft[side].players[pid];
+        if (value == null || value === -1) return;
+        const player = playerMap.get(pid);
+        if (!player) return;
+        const courseHcp = toCourseHcp(player.hcp, course);
+        const playing = Math.round(courseHcp * allowance);
+        const strokes = shotsOnHole(playing, hole - 1, sis);
+        const net = value - strokes;
+        if (!best || net < best.net) {
+          best = { playerId: pid, gross: value, net, strokes };
+        }
+      });
+      if (!best) return null;
+      const player = playerMap.get(best.playerId);
+      return {
+        ...best,
+        playerName: player?.name ?? 'Игрок',
+      };
+    };
+    return {
+      A: compute(aIds, 'A'),
+      B: compute(bIds, 'B'),
+    };
+  }, [aIds.join(','), bIds.join(','), allowance, course, draft, hole, playerMap, sis]);
+
   // ——— сохранение текущей лунки
   const persistHole = async () => {
     const i = hole-1;
@@ -238,6 +275,7 @@ export default function MatchInputPage({
     const rows = s==='A' ? visibleIds.A : visibleIds.B;
     if (!ids.length || !rows.length) return null;
     const note = focusPlayerId && rows.length === 1 ? 'Индивидуальный ввод' : pluralPlayers(ids.length);
+    const best = bestBySide[s];
     return (
       <section key={s} className="score-side">
         <div className="score-side-header">
@@ -262,7 +300,7 @@ export default function MatchInputPage({
                     ) : null}
                     {hasStroke ? (
                       <span className={`stroke-badge${strokeCount >= 2 ? ' strong' : ''}`}>
-                        +{strokeCount} {strokeCount === 1 ? 'удар' : 'удара'}
+                        +{strokeCount} {pluralShots(strokeCount)}
                       </span>
                     ) : null}
                     {hasStroke ? <span className="stroke-marker">{stars(strokeCount)}</span> : null}
@@ -307,6 +345,21 @@ export default function MatchInputPage({
               </div>
             );
           })}
+        </div>
+        <div className="score-side-footer">
+          {best ? (
+            <>
+              <div className="score-side-best-label">
+                Лучший нетто: <strong>{best.net}</strong>
+              </div>
+              <div className="score-side-best-meta">
+                {best.playerName} — gross {best.gross}
+                {best.strokes > 0 ? ` − ${best.strokes} ${pluralShots(best.strokes)}` : ''}
+              </div>
+            </>
+          ) : (
+            <div className="score-side-best-meta">Введите результаты игроков, чтобы рассчитать командный счёт.</div>
+          )}
         </div>
       </section>
     );
