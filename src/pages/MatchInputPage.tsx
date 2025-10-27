@@ -478,10 +478,10 @@ export default function MatchInputPage({
       </div>
 
       <div className="score-input-nav">
-        <button type="button" onClick={() => go(-1)} disabled={isFirstHole || saving || navPending}>
+        <button type="button" onClick={() => go(-1)} disabled={isFirstHole || navPending}>
           Назад
         </button>
-        <button type="button" className="primary" onClick={() => go(1)} disabled={saving || navPending}>
+        <button type="button" className="primary" onClick={() => go(1)} disabled={navPending}>
           {nextLabel}
         </button>
       </div>
