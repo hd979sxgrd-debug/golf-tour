@@ -121,7 +121,18 @@ export default function MatchInputPage({
   ]);
 
   const [hole, setHole] = useState<number>(firstUnfilledHole);
-  useEffect(()=>{ setHole(firstUnfilledHole); }, [firstUnfilledHole]);
+  const holeRef = useRef(hole);
+  const manualNavTargetRef = useRef<number | null>(null);
+  useEffect(() => {
+    holeRef.current = hole;
+    if (manualNavTargetRef.current !== null && hole === manualNavTargetRef.current) {
+      manualNavTargetRef.current = null;
+    }
+  }, [hole]);
+  useEffect(() => {
+    if (manualNavTargetRef.current !== null) return;
+    setHole((prev) => (prev === firstUnfilledHole ? prev : firstUnfilledHole));
+  }, [firstUnfilledHole]);
 
   const aName = nameOfSide(match.sideA, players, teams);
   const bName = nameOfSide(match.sideB, players, teams);
@@ -266,9 +277,19 @@ export default function MatchInputPage({
     if (navLockRef.current) return;
     navLockRef.current = true;
     setNavPending(true);
+    const originHole = holeRef.current;
+    const target = Math.max(1, Math.min(18, originHole + dir));
+    manualNavTargetRef.current = target;
     try {
       await persistHole();
-      setHole(h => Math.max(1, Math.min(18, h + dir)));
+      if (target !== holeRef.current) {
+        setHole(target);
+      } else {
+        manualNavTargetRef.current = null;
+      }
+    } catch (err) {
+      manualNavTargetRef.current = null;
+      throw err;
     } finally {
       navLockRef.current = false;
       setNavPending(false);
