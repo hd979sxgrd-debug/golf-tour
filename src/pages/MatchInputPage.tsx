@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Course, Match, MatchSide, Player, Team } from "../types";
 import { normalizeMatch } from "../utils";
 
@@ -121,7 +121,18 @@ export default function MatchInputPage({
   ]);
 
   const [hole, setHole] = useState<number>(firstUnfilledHole);
-  useEffect(()=>{ setHole(firstUnfilledHole); }, [firstUnfilledHole]);
+  const holeRef = useRef(hole);
+  const manualNavTargetRef = useRef<number | null>(null);
+  useEffect(() => {
+    holeRef.current = hole;
+    if (manualNavTargetRef.current !== null && hole === manualNavTargetRef.current) {
+      manualNavTargetRef.current = null;
+    }
+  }, [hole]);
+  useEffect(() => {
+    if (manualNavTargetRef.current !== null) return;
+    setHole((prev) => (prev === firstUnfilledHole ? prev : firstUnfilledHole));
+  }, [firstUnfilledHole]);
 
   const aName = nameOfSide(match.sideA, players, teams);
   const bName = nameOfSide(match.sideB, players, teams);
@@ -165,6 +176,8 @@ export default function MatchInputPage({
     }));
 
   const [saving, setSaving] = useState(false);
+  const navLockRef = useRef(false);
+  const [navPending, setNavPending] = useState(false);
 
   const strokeSummary = useMemo(() => {
     const list: { side: 'A' | 'B'; playerId: string; name: string; strokes: number }[] = [];
@@ -261,8 +274,26 @@ export default function MatchInputPage({
   };
 
   const go = async (dir:-1|1) => {
-    await persistHole();
-    setHole(h => Math.max(1, Math.min(18, h + dir)));
+    if (navLockRef.current) return;
+    navLockRef.current = true;
+    setNavPending(true);
+    const originHole = holeRef.current;
+    const target = Math.max(1, Math.min(18, originHole + dir));
+    manualNavTargetRef.current = target;
+    try {
+      await persistHole();
+      if (target !== holeRef.current) {
+        setHole(target);
+      } else {
+        manualNavTargetRef.current = null;
+      }
+    } catch (err) {
+      manualNavTargetRef.current = null;
+      throw err;
+    } finally {
+      navLockRef.current = false;
+      setNavPending(false);
+    }
   };
 
   const isFirstHole = hole === 1;
@@ -468,10 +499,10 @@ export default function MatchInputPage({
       </div>
 
       <div className="score-input-nav">
-        <button type="button" onClick={() => go(-1)} disabled={isFirstHole || saving}>
+        <button type="button" onClick={() => go(-1)} disabled={isFirstHole || navPending}>
           Назад
         </button>
-        <button type="button" className="primary" onClick={() => go(1)} disabled={saving}>
+        <button type="button" className="primary" onClick={() => go(1)} disabled={navPending}>
           {nextLabel}
         </button>
       </div>
