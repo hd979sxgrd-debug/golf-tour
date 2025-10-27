@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Course, Match, MatchSide, Player, Team } from "../types";
 import { normalizeMatch } from "../utils";
 
@@ -165,6 +165,8 @@ export default function MatchInputPage({
     }));
 
   const [saving, setSaving] = useState(false);
+  const navLockRef = useRef(false);
+  const [navPending, setNavPending] = useState(false);
 
   const strokeSummary = useMemo(() => {
     const list: { side: 'A' | 'B'; playerId: string; name: string; strokes: number }[] = [];
@@ -261,8 +263,16 @@ export default function MatchInputPage({
   };
 
   const go = async (dir:-1|1) => {
-    await persistHole();
-    setHole(h => Math.max(1, Math.min(18, h + dir)));
+    if (navLockRef.current) return;
+    navLockRef.current = true;
+    setNavPending(true);
+    try {
+      await persistHole();
+      setHole(h => Math.max(1, Math.min(18, h + dir)));
+    } finally {
+      navLockRef.current = false;
+      setNavPending(false);
+    }
   };
 
   const isFirstHole = hole === 1;
@@ -468,10 +478,10 @@ export default function MatchInputPage({
       </div>
 
       <div className="score-input-nav">
-        <button type="button" onClick={() => go(-1)} disabled={isFirstHole || saving}>
+        <button type="button" onClick={() => go(-1)} disabled={isFirstHole || saving || navPending}>
           Назад
         </button>
-        <button type="button" className="primary" onClick={() => go(1)} disabled={saving}>
+        <button type="button" className="primary" onClick={() => go(1)} disabled={saving || navPending}>
           {nextLabel}
         </button>
       </div>
