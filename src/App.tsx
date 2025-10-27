@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Admin from './components/Admin';
 import PublicBoard from './components/PublicBoard';
 import PlayersStats from './components/PlayersStats';
@@ -105,23 +105,38 @@ export default function App() {
   const [matchDetail, setMatchDetail] = useState<{ match: Match; course: Course } | null>(null);
   const [pollTimer, setPollTimer] = useState<number | null>(null);
 
+  const applyMatchDetail = useCallback((payload: { match: any; course: Course }) => {
+    const normalizedMatch = normalizeMatch(payload.match);
+    setMatchDetail({ match: normalizedMatch, course: payload.course });
+    setMatches((prev) => {
+      const idx = prev.findIndex((m) => m.id === normalizedMatch.id);
+      if (idx >= 0) {
+        const next = prev.slice();
+        next[idx] = normalizedMatch;
+        return next;
+      }
+      return [...prev, normalizedMatch];
+    });
+  }, []);
+
+  const fetchAndApplyMatch = useCallback(
+    (id: string) => apiGetMatchWithScores(id).then(({ match, course }) => applyMatchDetail({ match, course })),
+    [applyMatchDetail],
+  );
+
   useEffect(() => {
     if (pollTimer) { clearInterval(pollTimer); setPollTimer(null); }
 
     if ((parsed.mode === 'match' || parsed.mode === 'view') && parsed.matchId) {
       // ЗАГРУЗКА МАТЧА + hole_scores
-      apiGetMatchWithScores(parsed.matchId)
-        .then(({ match, course }) => setMatchDetail({ match: normalizeMatch(match), course }))
-        .catch(err => {
-          console.error(err);
-          setMatchDetail(null);
-        });
+      fetchAndApplyMatch(parsed.matchId).catch((err) => {
+        console.error(err);
+        setMatchDetail(null);
+      });
 
       // polling для LIVE
       const t = window.setInterval(() => {
-        apiGetMatchWithScores(parsed.matchId!)
-          .then(({ match, course }) => setMatchDetail({ match: normalizeMatch(match), course }))
-          .catch(() => {});
+        fetchAndApplyMatch(parsed.matchId!).catch(() => {});
       }, parsed.mode === 'match' ? 4000 : 5000);
       setPollTimer(t as unknown as number);
 
@@ -129,7 +144,7 @@ export default function App() {
     } else {
       setMatchDetail(null);
     }
-  }, [parsed.mode, parsed.matchId]);
+  }, [parsed.mode, parsed.matchId, fetchAndApplyMatch]);
 
   // ------ UI шапка/загрузка ------
   const TopBar = (
@@ -201,7 +216,7 @@ export default function App() {
             focusPlayerId={parsed.focusPlayerId}
             onScore={(payload) =>
               apiSubmitScore({ matchId: matchDetail.match.id, ...payload })
-                .then(() => apiGetMatchWithScores(matchDetail.match.id).then(({match,course})=>setMatchDetail({match,course})))
+                .then(() => fetchAndApplyMatch(matchDetail.match.id))
             }
           />
         </div>
