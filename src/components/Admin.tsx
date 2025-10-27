@@ -189,6 +189,39 @@ function TeamsTab() {
 }
 
 /** Вкладка "Поля" — компактный редактор + импорт */
+type CourseDraft = {
+  id: string;
+  name: string;
+  cr: string;
+  slope: string;
+  pars: string[];
+  strokeIndex: string[];
+};
+
+function courseToDraft(course: Course): CourseDraft {
+  const holeCount = Math.max(
+    course.pars?.length ?? 0,
+    course.strokeIndex?.length ?? 0,
+    18,
+  );
+
+  const pars = Array.from({ length: holeCount }, (_, i) =>
+    course.pars?.[i] != null ? String(course.pars[i]) : '',
+  );
+  const strokeIndex = Array.from({ length: holeCount }, (_, i) =>
+    course.strokeIndex?.[i] != null ? String(course.strokeIndex[i]) : '',
+  );
+
+  return {
+    id: course.id,
+    name: course.name ?? '',
+    cr: course.cr != null ? String(course.cr) : '',
+    slope: course.slope != null ? String(course.slope) : '',
+    pars,
+    strokeIndex,
+  };
+}
+
 function CoursesTab() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [form, setForm] = useState<Course>(() => ({
@@ -230,8 +263,8 @@ function CoursesTab() {
     reload();
   };
 
-  const onEdit = async (c: Course, patch: Partial<Course>) => {
-    await apiUpsertCourse({ ...c, ...patch });
+  const onSaveCourse = async (payload: Course) => {
+    await apiUpsertCourse(payload);
     reload();
   };
 
@@ -291,24 +324,9 @@ function CoursesTab() {
 
       <div className="card">
         <div className="header"><div className="title">Поля</div></div>
-        <div className="content grid" style={{ gap: 8 }}>
+        <div className="content grid" style={{ gap: 12 }}>
           {courses.length === 0 ? <div className="muted">Полей нет</div> : courses.map(c => (
-            <div key={c.id} className="card" style={{ padding: 12 }}>
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <input className="input" value={c.name} onChange={e=>onEdit(c, { name: e.target.value })} />
-                <input className="input" style={{ width: 120 }} placeholder="CR" value={c.cr ?? ''} onChange={e=>onEdit(c, { cr: e.target.value === '' ? null : Number(e.target.value) })} />
-                <input className="input" style={{ width: 120 }} placeholder="Slope" value={c.slope ?? ''} onChange={e=>onEdit(c, { slope: e.target.value === '' ? null : Number(e.target.value) })} />
-                <span className="muted" title={c.id} style={{ fontSize: 12 }}>id: {c.id}</span>
-              </div>
-              <div className="muted" style={{ marginTop: 6 }}>Par:</div>
-              <div className="grid" style={{ gridTemplateColumns: 'repeat(9,minmax(0,1fr))', gap: 6 }}>
-                {(c.pars || []).map((p, i) => <div key={i} className="chip" style={{ justifyContent: 'center' }}>{p}</div>)}
-              </div>
-              <div className="muted" style={{ marginTop: 6 }}>SI:</div>
-              <div className="grid" style={{ gridTemplateColumns: 'repeat(9,minmax(0,1fr))', gap: 6 }}>
-                {(c.strokeIndex || []).map((s, i) => <div key={i} className="chip" style={{ justifyContent: 'center' }}>{s}</div>)}
-              </div>
-            </div>
+            <CourseEditor key={c.id} course={c} onSave={onSaveCourse} />
           ))}
         </div>
       </div>
@@ -320,6 +338,162 @@ function CoursesTab() {
           <div style={{ marginTop: 8 }}>
             <button className="btn" onClick={doImport}>Импорт JSON</button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CourseEditor({ course, onSave }: { course: Course; onSave: (course: Course) => Promise<void> }) {
+  const [initial, setInitial] = useState<CourseDraft>(() => courseToDraft(course));
+  const [draft, setDraft] = useState<CourseDraft>(() => courseToDraft(course));
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const prepared = courseToDraft(course);
+    setInitial(prepared);
+    setDraft({
+      ...prepared,
+      pars: [...prepared.pars],
+      strokeIndex: [...prepared.strokeIndex],
+    });
+  }, [course]);
+
+  const isDirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initial), [draft, initial]);
+
+  const updateDraft = (patch: Partial<CourseDraft>) => {
+    setDraft(prev => ({
+      ...prev,
+      ...patch,
+    }));
+  };
+
+  const updateArrayValue = (key: 'pars' | 'strokeIndex', index: number, value: string) => {
+    setDraft(prev => {
+      const next = [...prev[key]];
+      next[index] = value;
+      return { ...prev, [key]: next };
+    });
+  };
+
+  const parseOptionalNumber = (value: string, label: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const normalized = Number(trimmed);
+    if (!Number.isFinite(normalized)) {
+      throw new Error(`${label} должно быть числом`);
+    }
+    return normalized;
+  };
+
+  const parseRequiredArray = (values: string[], label: string) => {
+    return values.map((raw, idx) => {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        throw new Error(`${label} для лунки ${idx + 1} обязательно`);
+      }
+      const numeric = Number(trimmed);
+      if (!Number.isFinite(numeric)) {
+        throw new Error(`${label} для лунки ${idx + 1} должно быть числом`);
+      }
+      return numeric;
+    });
+  };
+
+  const handleSave = async () => {
+    if (saving || !isDirty) return;
+    try {
+      const name = draft.name.trim();
+      if (!name) {
+        alert('Введите название поля');
+        return;
+      }
+
+      const cr = parseOptionalNumber(draft.cr, 'CR');
+      const slope = parseOptionalNumber(draft.slope, 'Slope');
+      const pars = parseRequiredArray(draft.pars, 'Par');
+      const strokeIndex = parseRequiredArray(draft.strokeIndex, 'Stroke Index');
+
+      setSaving(true);
+      const payload: Course = {
+        ...course,
+        name,
+        cr,
+        slope,
+        pars,
+        strokeIndex,
+      };
+
+      await onSave(payload);
+      const prepared = courseToDraft(payload);
+      setInitial(prepared);
+      setDraft({
+        ...prepared,
+        pars: [...prepared.pars],
+        strokeIndex: [...prepared.strokeIndex],
+      });
+    } catch (e: any) {
+      if (e?.message) {
+        alert(e.message);
+      } else {
+        alert('Не удалось сохранить поле');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reset = () => {
+    setDraft({
+      ...initial,
+      pars: [...initial.pars],
+      strokeIndex: [...initial.strokeIndex],
+    });
+  };
+
+  return (
+    <div className="card" style={{ padding: 12 }}>
+      <div className="grid" style={{ gap: 12 }}>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <input className="input" value={draft.name} onChange={e=>updateDraft({ name: e.target.value })} />
+          <input className="input" style={{ width: 120 }} placeholder="CR" value={draft.cr} onChange={e=>updateDraft({ cr: e.target.value })} />
+          <input className="input" style={{ width: 120 }} placeholder="Slope" value={draft.slope} onChange={e=>updateDraft({ slope: e.target.value })} />
+        </div>
+
+        <div>
+          <div className="muted" style={{ marginBottom: 6 }}>Par:</div>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(9,minmax(0,1fr))', gap: 6 }}>
+            {draft.pars.map((p, i) => (
+              <input
+                key={i}
+                className="input"
+                inputMode="numeric"
+                value={p}
+                onChange={e=>updateArrayValue('pars', i, e.target.value)}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="muted" style={{ marginBottom: 6 }}>Stroke Index:</div>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(9,minmax(0,1fr))', gap: 6 }}>
+            {draft.strokeIndex.map((p, i) => (
+              <input
+                key={i}
+                className="input"
+                inputMode="numeric"
+                value={p}
+                onChange={e=>updateArrayValue('strokeIndex', i, e.target.value)}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button className="btn primary" onClick={handleSave} disabled={saving || !isDirty}>Сохранить</button>
+          <button className="btn" onClick={reset} disabled={saving || !isDirty}>Сбросить</button>
+          <span className="muted" title={course.id} style={{ fontSize: 12 }}>id: {course.id}</span>
         </div>
       </div>
     </div>
