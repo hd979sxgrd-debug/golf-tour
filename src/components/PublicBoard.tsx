@@ -10,7 +10,7 @@ type Props = {
   teams: Team[];
 }
 
-const DAYS = ['Day 0','Day 1','Day 2','Day 3','Day 4','Day 5'];
+const SCORING_DAYS = ['Day 1','Day 2','Day 3','Day 4','Day 5'];
 
 export default function PublicBoard({ matches, courses, players, teams }: Props){
   const normalizedMatches = useMemo(() => matches.map(normalizeMatch), [matches]);
@@ -20,12 +20,13 @@ export default function PublicBoard({ matches, courses, players, teams }: Props)
 
   // --- Очки по дням и командам ---
   const totalsByDay: Record<string, Record<string, number>> = {};
-  DAYS.forEach(d => (totalsByDay[d] = {}));
+  SCORING_DAYS.forEach(d => (totalsByDay[d] = {}));
   const overallTotals: Record<string, number> = {};
   const participating = new Set<string>();
 
   const pushPoints = (day: string, teamId: string, pts: number) => {
     if (!teamId) return;
+    if (!SCORING_DAYS.includes(day)) return;
     if (!totalsByDay[day]) totalsByDay[day] = {};
     totalsByDay[day][teamId] = (totalsByDay[day][teamId] ?? 0) + pts;
     overallTotals[teamId] = (overallTotals[teamId] ?? 0) + pts;
@@ -34,7 +35,7 @@ export default function PublicBoard({ matches, courses, players, teams }: Props)
 
   normalizedMatches.forEach(m => {
     const day = m.day ?? 'Day 1';
-    if (!DAYS.includes(day)) return;
+    if (!SCORING_DAYS.includes(day)) return;
     const c = courseOf(m.courseId);
     if (!c) return;
     const res = calcMatchPlayStatus(m, players, teams, c);
@@ -64,7 +65,7 @@ export default function PublicBoard({ matches, courses, players, teams }: Props)
 
   // Подсчёт тоталов
   let grandA = 0, grandB = 0;
-  const rows = DAYS.map(day => {
+  const rows = SCORING_DAYS.map(day => {
     const a = teamAId ? (totalsByDay[day]?.[teamAId] ?? 0) : 0;
     const b = teamBId ? (totalsByDay[day]?.[teamBId] ?? 0) : 0;
     grandA += a; grandB += b;
@@ -73,10 +74,10 @@ export default function PublicBoard({ matches, courses, players, teams }: Props)
 
   // Группировка матчей по дням для списков
   const matchesByDay: Record<string, Match[]> = {};
-  DAYS.forEach(d => matchesByDay[d] = []);
+  SCORING_DAYS.forEach(d => matchesByDay[d] = []);
   normalizedMatches.forEach(m => {
     const d = m.day ?? 'Day 1';
-    if (DAYS.includes(d)) matchesByDay[d].push(m);
+    if (SCORING_DAYS.includes(d)) matchesByDay[d].push(m);
   });
 
   // --- UI helpers ---
@@ -145,7 +146,7 @@ export default function PublicBoard({ matches, courses, players, teams }: Props)
       </div>
 
       {/* --- Списки матчей по дням с бейджами LIVE!/FINAL RESULT --- */}
-      {DAYS.map(day => {
+      {SCORING_DAYS.map(day => {
         const list = (matchesByDay[day] || []).filter(m => courseOf(m.courseId));
         const dayRow = rows.find(r => r.day===day);
         const dayTotalsA = dayRow?.a ?? 0;
