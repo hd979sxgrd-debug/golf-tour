@@ -1,15 +1,9 @@
 import React, { useMemo } from "react";
 import { Course, Match, MatchSide, Player, Team } from "../types";
-import { normalizeMatch } from "../utils";
+import { normalizeMatch, strokeCountForPlayer } from "../utils";
 
 /* ——— helpers ——— */
-const ALLOW_SINGLES = 0.75;
-const ALLOW_FOURBALL = 0.75;
 const safePars = (c: Course) => (Array.isArray(c.pars) && c.pars.length===18 ? c.pars : [4,4,3,5,4,4,5,3,4, 4,5,3,4,4,5,3,4,4]);
-const safeSI   = (c: Course) => (Array.isArray(c.strokeIndex) && c.strokeIndex.length===18 ? c.strokeIndex : Array(18).fill(null));
-const coursePar = (c: Course) => safePars(c).reduce((a,b)=>a+b,0);
-const toCourseHcp = (hi:number|undefined, c:Course)=>{ if(hi==null) return 0; const slope=c.slope??113, cr=c.cr??coursePar(c), par=coursePar(c); return Math.round(hi*(slope/113)+(cr-par)); };
-const shotsOnHole = (ch:number, holeIdx:number, si?: (number|null)[])=>{ if(!si||si.length!==18) return 0; const idx=si[holeIdx]??99; let s=0; if(ch>=idx)s++; if(ch>18&&ch-18>=idx)s++; if(ch>36&&ch-36>=idx)s++; return s; };
 const stars=(n:number)=> (n>=2?'**': n===1?'*':'');
 const expandSide=(side:MatchSide[], teams:Team[])=>{ const ids:string[]=[]; for(const s of side){ if(s.type==='player') ids.push(s.id); else { const t=teams.find(tt=>tt.id===s.id); if(t) ids.push(...t.playerIds);} } return Array.from(new Set(ids)); };
 const sideName=(side:MatchSide[], players:Player[], teams:Team[])=> expandSide(side,teams).map(id=>players.find(p=>p.id===id)?.name??'—').join(' & ');
@@ -30,9 +24,7 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
   const bIds = expandSide(match.sideB, teams);
   const aName = sideName(match.sideA, players, teams);
   const bName = sideName(match.sideB, players, teams);
-  const pars = safePars(course); const siArr = safeSI(course);
-  const allow = match.format==='singles'? ALLOW_SINGLES : ALLOW_FOURBALL;
-
+  const pars = safePars(course);
   const { aNet, bNet, aStars, bStars, winners } = useMemo(()=>{
     const A:(number|null)[]=[]; const B:(number|null)[]=[];
     const Astar:(''|'*'|'**')[]=[]; const Bstar:(''|'*'|'**')[]=[];
@@ -42,9 +34,9 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
       if (per && Object.keys(per).length){
         for(const pid of ids){
           const g=per[pid]?.[i] ?? null; if(g==null) continue;
-          const hi=players.find(p=>p.id===pid)?.hcp ?? 0;
-          const ch=Math.round(toCourseHcp(hi,course)*allow);
-          const sh=shotsOnHole(ch,i,siArr);
+          const pl = players.find(p=>p.id===pid);
+          if(!pl) continue;
+          const sh=strokeCountForPlayer(match.format, pl, course, i, match);
           list.push({net:g-sh, star:stars(sh)});
         }
       } else if (team){ const g=team[i]; if(g!=null) list.push({net:g, star:''}); }
@@ -62,7 +54,7 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
       else res.push('AS');
     }
     return { aNet:A, bNet:B, aStars:Astar, bStars:Bstar, winners:res };
-  }, [JSON.stringify(match)]);
+  }, [course, match, players]);
 
   const upF = winners.slice(0,9).reduce((n,r)=> r==='A'?n+1: r==='B'?n-1:n, 0);
   const upB = winners.slice(9).reduce((n,r)=> r==='A'?n+1: r==='B'?n-1:n, 0);
@@ -114,7 +106,7 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
         {Array.from({length:9}).map((_,i)=>(
           <React.Fragment key={i}>
             <div className="midCell midCell-left"><Chip value={aNet[i]} color="red" win={winners[i]==='A'} star={aStars[i]}/></div>
-            <div className="midCell"><Chip value={safePars(course)[i]} color="gray"/></div>
+            <div className="midCell"><Chip value={pars[i]} color="gray"/></div>
             <div className="midCell midCell-right"><Chip value={bNet[i]} color="blue" win={winners[i]==='B'} star={bStars[i]}/></div>
           </React.Fragment>
         ))}
@@ -126,7 +118,7 @@ export default function MatchViewPage({ match: rawMatch, course, players, teams 
           return (
             <React.Fragment key={i}>
               <div className="midCell midCell-left"><Chip value={aNet[i]} color="red" win={winners[i]==='A'} star={aStars[i]}/></div>
-              <div className="midCell"><Chip value={safePars(course)[i]} color="gray"/></div>
+              <div className="midCell"><Chip value={pars[i]} color="gray"/></div>
               <div className="midCell midCell-right"><Chip value={bNet[i]} color="blue" win={winners[i]==='B'} star={bStars[i]}/></div>
             </React.Fragment>
           );
