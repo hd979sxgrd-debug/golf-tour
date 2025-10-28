@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import { getPool } from './_shared/db';
 import { ok, bad, methodNotAllowed, handleOptions, readJson, requireAdmin } from './_shared/http';
 import { ensureMatchesSchema } from './_shared/schema';
+import { buildHandicapSnapshot, resolvePlayerHcpColumn } from './_shared/hcp';
 
 type Payload = {
   id: string;
@@ -16,6 +17,24 @@ type Payload = {
   sideBTeamId?: string | null;
   sideAPlayerIds: string[];
   sideBPlayerIds: string[];
+  handicapSnapshot?: Record<string, number | null | undefined>;
+};
+
+const normalizeSnapshotInput = (raw: any): Record<string, number | null> | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const snapshot: Record<string, number | null> = {};
+  for (const [pid, value] of Object.entries(raw)) {
+    if (!pid) continue;
+    if (value === null) {
+      snapshot[pid] = null;
+      continue;
+    }
+    const num = typeof value === 'number' ? value : Number(value);
+    if (Number.isFinite(num)) {
+      snapshot[pid] = num;
+    }
+  }
+  return Object.keys(snapshot).length ? snapshot : undefined;
 };
 
 async function resolveDayCol(pool: Pool): Promise<{ col: 'day' | 'match_day' | 'day_label'; notNull: boolean }> {
@@ -60,11 +79,25 @@ export const handler: Handler = async (event) => {
     // side_a / side_b как JSONB-массив объектов {type:'player', id:'...'}
     const sideA = (body.sideAPlayerIds || []).map(pid => ({ type: 'player', id: pid }));
     const sideB = (body.sideBPlayerIds || []).map(pid => ({ type: 'player', id: pid }));
+    const playerIds = Array.from(new Set([...sideA, ...sideB].map((s) => s.id).filter(Boolean)));
+    const providedSnapshot = normalizeSnapshotInput(body.handicapSnapshot ?? (body as any)?.handicap_snapshot);
 
     const pool = getPool();
     await ensureMatchesSchema(pool);
 
     const { col: dayCol, notNull } = await resolveDayCol(pool);
+    const hcpCol = await resolvePlayerHcpColumn(pool);
+    const computedSnapshot = await buildHandicapSnapshot(pool, playerIds, hcpCol);
+    const handicapSnapshot: Record<string, number | null> = {};
+    playerIds.forEach((pid) => {
+      if (providedSnapshot && pid in providedSnapshot) {
+        handicapSnapshot[pid] = providedSnapshot[pid]!;
+      } else if (pid in computedSnapshot) {
+        handicapSnapshot[pid] = computedSnapshot[pid]!;
+      } else {
+        handicapSnapshot[pid] = null;
+      }
+    });
 
     // ЖЁСТКАЯ гарантия непустого значения дня:
     // rawDay может быть пустой строкой, поэтому используем fallback 'Day 1'
@@ -79,8 +112,8 @@ export const handler: Handler = async (event) => {
     });
 
     const sql = `
-      insert into matches (id, name, ${dayCol}, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id, created_at)
-      values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, now())
+      insert into matches (id, name, ${dayCol}, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id, handicap_snapshot, created_at)
+      values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, now())
       on conflict (id) do update set
         name = excluded.name,
         ${dayCol} = excluded.${dayCol},
@@ -89,14 +122,16 @@ export const handler: Handler = async (event) => {
         side_a = excluded.side_a,
         side_b = excluded.side_b,
         side_a_team_id = excluded.side_a_team_id,
-        side_b_team_id = excluded.side_b_team_id
-      returning id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
+        side_b_team_id = excluded.side_b_team_id,
+        handicap_snapshot = excluded.handicap_snapshot
+      returning id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id, handicap_snapshot
     `;
 
     const { rows } = await pool.query(sql, [
       id, name, dayParam, format, courseId,
       JSON.stringify(sideA), JSON.stringify(sideB),
-      sideATeamId, sideBTeamId
+      sideATeamId, sideBTeamId,
+      JSON.stringify(handicapSnapshot)
     ]);
 
     return ok({ match: rows[0] });

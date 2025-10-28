@@ -64,7 +64,7 @@ export default function PlayersStats({ matches, courses, players, teams }:{ matc
             const grossValue = grossFor(playerScores, pid, holeIdx);
             let grossScore: number | null = null;
             if (grossValue === -1) {
-              grossScore = grossFromDash(match.format, player, course, holeIdx);
+              grossScore = grossFromDash(match.format, player, course, holeIdx, match);
             } else if (typeof grossValue === 'number') {
               grossScore = grossValue;
             }

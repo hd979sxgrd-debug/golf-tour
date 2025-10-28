@@ -15,15 +15,15 @@ export default function ViewPage({ match, course, players, teams }:{ match:Match
     const sideDef = side==='A'? match.sideA : match.sideB;
     const playerScores = side==='A'? match.playerScoresA : match.playerScoresB;
     const grossRow = side==='A'? match.scoresA : match.scoresB;
-    const { net, meta } = sideNetOnHole({ format: match.format, holeIdx, side: sideDef, grossRow, playerScores, players, teams, course });
+    const { net, meta } = sideNetOnHole({ format: match.format, holeIdx, side: sideDef, grossRow, playerScores, players, teams, course, match });
     let stars = '';
     if (match.format==='singles'){
       const pid = (side==='A'?idsA:idsB)[0];
       const pl = players.find(p=>p.id===pid)!;
-      stars = strokeStarsForPlayer(match.format, pl, course, holeIdx);
+      stars = strokeStarsForPlayer(match.format, pl, course, holeIdx, match);
     } else if (meta.usedPid){
       const pl = players.find(p=>p.id===meta.usedPid)!;
-      stars = strokeStarsForPlayer(match.format, pl, course, holeIdx);
+      stars = strokeStarsForPlayer(match.format, pl, course, holeIdx, match);
     }
     const text = net==null ? '–' : String(net);
     return stars ? `${text}${stars}` : text;

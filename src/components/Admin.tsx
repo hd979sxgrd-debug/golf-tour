@@ -533,10 +533,16 @@ function MatchesTab() {
 
   const create = async () => {
     if (!name.trim() || !courseId || !teamA || !teamB || sideA.length===0 || sideB.length===0) return;
+    const snapshot: Record<string, number | null> = {};
+    [...sideA, ...sideB].forEach(pid => {
+      const player = players.find(p => p.id === pid);
+      if (player) snapshot[pid] = player.hcp ?? null;
+    });
     await apiCreateMatch({
       id: uid('m'), name: name.trim(), day, format, courseId,
       sideATeamId: teamA, sideBTeamId: teamB,
-      sideAPlayerIds: sideA, sideBPlayerIds: sideB
+      sideAPlayerIds: sideA, sideBPlayerIds: sideB,
+      handicapSnapshot: snapshot
     });
     setName(''); setTeamA(''); setTeamB(''); setSideA([]); setSideB([]);
     reload();

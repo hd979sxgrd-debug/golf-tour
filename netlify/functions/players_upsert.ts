@@ -1,22 +1,9 @@
 import type { Handler } from '@netlify/functions';
-import type { Pool } from 'pg';
 import { getPool } from './_shared/db';
 import { ok, bad, methodNotAllowed, handleOptions, readJson } from './_shared/http';
+import { resolvePlayerHcpColumn } from './_shared/hcp';
 
 type Payload = { id?: string; name: string; hcp?: number | null };
-
-async function resolveHcpColumn(pool: Pool): Promise<'hcp' | 'hi' | 'handicap'> {
-  const { rows } = await pool.query(
-    `select column_name
-       from information_schema.columns
-      where table_name = 'players' and column_name in ('hcp','hi','handicap')`
-  );
-  if (rows.length > 0) return rows[0].column_name;
-
-  // ни одной подходящей — создаём стандартную
-  await pool.query(`alter table players add column if not exists hcp real`);
-  return 'hcp';
-}
 
 export const handler: Handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return handleOptions(event);
@@ -31,7 +18,7 @@ export const handler: Handler = async (event) => {
     if (!name) return bad('name is required');
 
     const pool = getPool();
-    const hcpCol = await resolveHcpColumn(pool); // 'hcp' | 'hi' | 'handicap'
+    const hcpCol = await resolvePlayerHcpColumn(pool); // 'hcp' | 'hi' | 'handicap'
 
     // Внимательно подставляем имя колонки только из whitelist:
     const sql = `

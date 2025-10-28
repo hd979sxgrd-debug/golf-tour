@@ -3,18 +3,9 @@ import type { Pool } from 'pg';
 import { getPool } from './_shared/db';
 import { ok, bad } from './_shared/http';
 import { ensureMatchesSchema } from './_shared/schema';
+import { buildHandicapSnapshot, resolvePlayerHcpColumn } from './_shared/hcp';
 
 /* ---- helpers: autodetect columns ---- */
-
-async function resolveHcpColumn(pool: Pool): Promise<'hcp' | 'hi' | 'handicap'> {
-  const { rows } = await pool.query(
-    `select column_name from information_schema.columns
-     where table_name = 'players' and column_name in ('hcp','hi','handicap')`
-  );
-  if (rows.length > 0) return rows[0].column_name;
-  await pool.query(`alter table players add column if not exists hcp real`);
-  return 'hcp';
-}
 
 // (The file already has fairly complete resolveSiColumn with migration logic — keep that.)
 async function resolveSiColumn(pool: Pool): Promise<'stroke_index' | 'si' | 'strokeindex'> {
@@ -95,7 +86,7 @@ export const handler: Handler = async () => {
     const pool = getPool();
 
     // players
-    const hcpCol = await resolveHcpColumn(pool);
+    const hcpCol = await resolvePlayerHcpColumn(pool);
     const players = (await pool.query(
       `select id, name, ${hcpCol} as hcp from players order by name`
     )).rows.map((p:any) => ({
@@ -129,9 +120,50 @@ export const handler: Handler = async () => {
     await ensureMatchesSchema(pool);
     const { col: dayCol } = await resolveDayCol(pool);
     const matchRows = (await pool.query(
-      `select id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
+      `select id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id, handicap_snapshot
          from matches order by ${dayCol} nulls last`
     )).rows as any[];
+
+    const extractPlayerIds = (side: any): string[] => {
+      if (!Array.isArray(side)) return [];
+      return side
+        .map((item: any) => (item && typeof item === 'object' && item.type === 'player' ? String(item.id) : null))
+        .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    };
+
+    for (const row of matchRows) {
+      const playersInMatch = new Set<string>([
+        ...extractPlayerIds(row.side_a),
+        ...extractPlayerIds(row.side_b),
+      ]);
+
+      const snapshotRaw = row.handicap_snapshot;
+      let snapshotObj: Record<string, any> | undefined;
+      if (snapshotRaw && typeof snapshotRaw === 'object' && !Array.isArray(snapshotRaw)) {
+        snapshotObj = snapshotRaw as Record<string, any>;
+      }
+
+      let needsUpdate = !snapshotObj;
+      if (!needsUpdate && snapshotObj) {
+        for (const pid of playersInMatch) {
+          if (!(pid in snapshotObj)) {
+            needsUpdate = true;
+            break;
+          }
+        }
+      }
+
+      if (needsUpdate && playersInMatch.size > 0) {
+        const snapshot = await buildHandicapSnapshot(pool, Array.from(playersInMatch), hcpCol);
+        row.handicap_snapshot = snapshot;
+        await pool.query(
+          `update matches set handicap_snapshot = $2::jsonb where id = $1`,
+          [row.id, JSON.stringify(snapshot)]
+        );
+      } else {
+        row.handicap_snapshot = snapshotObj ?? {};
+      }
+    }
 
     const holeScoresMap = new Map<string, any[]>();
     if (matchRows.length) {
@@ -159,6 +191,7 @@ export const handler: Handler = async () => {
       sideB: m.side_b,
       sideATeamId: m.side_a_team_id || undefined,
       sideBTeamId: m.side_b_team_id || undefined,
+      handicapSnapshot: (m.handicap_snapshot && typeof m.handicap_snapshot === 'object') ? m.handicap_snapshot : undefined,
       hole_scores: holeScoresMap.get(m.id) ?? [],
     }));
 
