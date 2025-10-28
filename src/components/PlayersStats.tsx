@@ -3,7 +3,7 @@ import React, { useMemo, useState } from 'react'
 import { Course, Match, Player, Team } from '../types'
 import { flattenPlayerIds, grossFromDash, grossFor, shotsOnHole, toCourseHandicap } from '../utils'
 
-const defaultDays = ['Day 1','Day 2','Day 3','Day 4','Day 5'];
+const defaultDays = ['Day 0','Day 1','Day 2','Day 3','Day 4','Day 5'];
 
 type PlayerDaySummary = { gross: number; adjusted: number; holeCount: number };
 type PlayerDayDetail = {
