@@ -12,6 +12,7 @@ import {
   apiDeleteMatch,
 } from './api';
 import MatchPage from './pages/MatchPage';
+import HcpPage from './pages/HcpPage';
 import { normalizeMatch, normalizeMatches } from './utils';
 import {
   ADMIN_USERNAME,
@@ -236,6 +237,18 @@ export default function App() {
         {TopBar}
         <div className="max-w-6xl mx-auto p-4">
           <Admin />
+        </div>
+      </>
+    );
+  }
+
+  if (route.startsWith('/hcp')) {
+    if (!hydrated) return Loading;
+    return (
+      <>
+        {TopBar}
+        <div className="max-w-6xl mx-auto p-4">
+          <HcpPage matches={matches} courses={courses} players={players} teams={teams} />
         </div>
       </>
     );

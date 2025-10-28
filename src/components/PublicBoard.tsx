@@ -10,7 +10,7 @@ type Props = {
   teams: Team[];
 }
 
-const DAYS = ['Day 1','Day 2','Day 3','Day 4','Day 5'];
+const DAYS = ['Day 0','Day 1','Day 2','Day 3','Day 4','Day 5'];
 
 export default function PublicBoard({ matches, courses, players, teams }: Props){
   const normalizedMatches = useMemo(() => matches.map(normalizeMatch), [matches]);
@@ -96,7 +96,10 @@ export default function PublicBoard({ matches, courses, players, teams }: Props)
     <div className="container">
       <div className="header" style={{alignItems:'center', gap:8}}>
         <div className="title">Счёт матчей</div>
-        <a className="btn" href="#/players">Игроки (итоги по дням)</a>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <a className="btn" href="#/players">Игроки (итоги по дням)</a>
+          <a className="btn" href="#/hcp">Гандикап (дифференциалы)</a>
+        </div>
       </div>
 
       {/* --- ИТОГОВАЯ ТАБЛИЦА КОМАНД ЗА 5 ДНЕЙ (центр, крупные цифры, красный лидер) --- */}
