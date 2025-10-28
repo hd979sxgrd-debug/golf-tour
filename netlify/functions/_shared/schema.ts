@@ -76,6 +76,10 @@ export async function ensureMatchesSchema(pool: Pool) {
   `);
   await pool.query(`
     alter table matches
+      add column if not exists handicap_snapshot jsonb default '{}'::jsonb;
+  `);
+  await pool.query(`
+    alter table matches
       add column if not exists created_at timestamptz default now();
   `);
 }

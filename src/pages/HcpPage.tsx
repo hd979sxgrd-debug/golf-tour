@@ -113,7 +113,7 @@ export default function HcpPage({ matches, courses, players, teams }: Props) {
           const grossValue = grossFor(scoreMap as any, pid, holeIdx);
           let grossScore: number | null = null;
           if (grossValue === -1) {
-            grossScore = grossFromDash(match.format, player, course, holeIdx);
+            grossScore = grossFromDash(match.format, player, course, holeIdx, match);
           } else if (typeof grossValue === 'number') {
             grossScore = grossValue;
           }

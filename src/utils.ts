@@ -87,6 +87,33 @@ const compactPlayerScores = (src: Record<string, (number | null | undefined)[]>)
   return Object.keys(result).length ? result : undefined;
 };
 
+const normalizeHandicapSnapshot = (raw: any): Record<string, number | null | undefined> | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const snapshot: Record<string, number | null | undefined> = {};
+  for (const [pid, value] of Object.entries(raw)) {
+    if (!pid) continue;
+    if (value === null) {
+      snapshot[pid] = null;
+      continue;
+    }
+    const num = typeof value === 'number' ? value : Number(value);
+    if (Number.isFinite(num)) {
+      snapshot[pid] = num;
+    }
+  }
+  return Object.keys(snapshot).length ? snapshot : undefined;
+};
+
+const handicapFromSnapshot = (match: Match | undefined, playerId: string): number | undefined => {
+  const raw = match?.handicapSnapshot?.[playerId];
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (raw != null) {
+    const num = Number(raw);
+    if (Number.isFinite(num)) return num;
+  }
+  return undefined;
+};
+
 export function normalizeMatch(raw: any): Match {
   const table = extractHoleTable(raw);
 
@@ -107,6 +134,7 @@ export function normalizeMatch(raw: any): Match {
     scoresB: baseScoresB,
     playerScoresA: undefined,
     playerScoresB: undefined,
+    handicapSnapshot: normalizeHandicapSnapshot(raw.handicapSnapshot ?? raw.handicap_snapshot),
     notes: raw.notes,
   };
 
@@ -207,21 +235,23 @@ export function nameOfSide(side: MatchSide[], players: Player[], teams: Team[]){
   return ids.map(id => players.find(p=>p.id===id)?.name ?? '?').join(' & ');
 }
 
-export function playerCourseHcpWithAllowance(fmt: Match['format'], player: Player, course: Course){
-  const ch = toCourseHandicap(player.hcp ?? 0, course);
+export function playerCourseHcpWithAllowance(fmt: Match['format'], player: Player, course: Course, match?: Match){
+  const snapshotHi = handicapFromSnapshot(match, player.id);
+  const hi = (snapshotHi ?? player.hcp) ?? 0;
+  const ch = toCourseHandicap(hi, course);
   return Math.round(ch * allowanceFor(fmt));
 }
-export function strokeCountForPlayer(fmt: Match['format'], player: Player, course: Course, holeIdx:number){
-  const chA = playerCourseHcpWithAllowance(fmt, player, course);
+export function strokeCountForPlayer(fmt: Match['format'], player: Player, course: Course, holeIdx:number, match?: Match){
+  const chA = playerCourseHcpWithAllowance(fmt, player, course, match);
   return shotsOnHole(chA, holeIdx, course.strokeIndex);
 }
-export function strokeStarsForPlayer(fmt: Match['format'], player: Player, course: Course, holeIdx:number){
-  const n = strokeCountForPlayer(fmt, player, course, holeIdx);
+export function strokeStarsForPlayer(fmt: Match['format'], player: Player, course: Course, holeIdx:number, match?: Match){
+  const n = strokeCountForPlayer(fmt, player, course, holeIdx, match);
   return n<=0 ? '' : (n===1 ? '*' : '**');
 }
-export function grossFromDash(fmt: Match['format'], player: Player, course: Course, holeIdx:number){
+export function grossFromDash(fmt: Match['format'], player: Player, course: Course, holeIdx:number, match?: Match){
   const par = course.pars?.[holeIdx] ?? 4;
-  const shots = strokeCountForPlayer(fmt, player, course, holeIdx);
+  const shots = strokeCountForPlayer(fmt, player, course, holeIdx, match);
   return par + shots + 2;
 }
 export function grossFor(playerScores: Record<string,(number|null)[]>|undefined, pid:string, holeIdx:number): number|null {
@@ -233,18 +263,19 @@ export function grossFor(playerScores: Record<string,(number|null)[]>|undefined,
 export function sideNetOnHole(params:{
   format: Match['format']; holeIdx: number; side: MatchSide[];
   grossRow?: (number|null)[]; playerScores?: Record<string,(number|null)[]>;
-  players: Player[]; teams: Team[]; course: Course;
+  players: Player[]; teams: Team[]; course: Course; match?: Match;
 }): {net:number|null, meta:{usedPid?:string, forfeit?:boolean}} {
-  const { format, holeIdx, side, grossRow, playerScores, players, teams, course } = params;
+  const { format, holeIdx, side, grossRow, playerScores, players, teams, course, match } = params;
   const si = course.strokeIndex;
   const ids = flattenPlayerIds(side, teams);
 
   const playerNet = (pid:string): number|null => {
     const p = players.find(q=>q.id===pid);
+    if (!p) return null;
     const g = grossFor(playerScores, pid, holeIdx);
     if (g === -1) return null; // dash
     if (g == null) return null;
-    const chA = playerCourseHcpWithAllowance(format, p!, course);
+    const chA = playerCourseHcpWithAllowance(format, p, course, match);
     return g - shotsOnHole(chA, holeIdx, si);
   };
 
@@ -290,8 +321,8 @@ export function holeResultGeneric(a:number|null, b:number|null): 'A'|'B'|'AS'|nu
 export function calcMatchPlayStatus(match:Match, players:Player[], teams:Team[], course:Course){
   let up = 0; const perHole: ('A'|'B'|'AS'|null)[] = [];
   for (let i=0;i<18;i++){
-    const a = sideNetOnHole({ format: match.format, holeIdx:i, side: match.sideA, grossRow: match.scoresA, playerScores: match.playerScoresA, players, teams, course });
-    const b = sideNetOnHole({ format: match.format, holeIdx:i, side: match.sideB, grossRow: match.scoresB, playerScores: match.playerScoresB, players, teams, course });
+    const a = sideNetOnHole({ format: match.format, holeIdx:i, side: match.sideA, grossRow: match.scoresA, playerScores: match.playerScoresA, players, teams, course, match });
+    const b = sideNetOnHole({ format: match.format, holeIdx:i, side: match.sideB, grossRow: match.scoresB, playerScores: match.playerScoresB, players, teams, course, match });
     const r = (match.format==='singles')
       ? holeResultSingles({ net:a.net, forfeit: a.meta.forfeit }, { net:b.net, forfeit: b.meta.forfeit })
       : holeResultGeneric(a.net, b.net);

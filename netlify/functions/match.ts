@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import { getPool } from './_shared/db';
 import { ok, bad } from './_shared/http';
 import { ensureMatchesSchema } from './_shared/schema';
+import { buildHandicapSnapshot } from './_shared/hcp';
 
 async function resolveDayCol(pool: Pool): Promise<'day' | 'match_day' | 'day_label'> {
   // (existing implementation retained)
@@ -44,12 +45,42 @@ export const handler: Handler = async (event) => {
     const siCol = await resolveSiColumn(pool);
 
     const mres = await pool.query(
-      `select id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id
+      `select id, name, ${dayCol} as day, format, course_id, side_a, side_b, side_a_team_id, side_b_team_id, handicap_snapshot
          from matches where id = $1`,
       [id]
     );
     if (mres.rowCount === 0) return bad('match not found', 404);
     const m = mres.rows[0];
+
+    const extractPlayerIds = (side: any): string[] => {
+      if (!Array.isArray(side)) return [];
+      return side
+        .map((item: any) => (item && typeof item === 'object' && item.type === 'player' ? String(item.id) : null))
+        .filter((pid): pid is string => typeof pid === 'string' && pid.length > 0);
+    };
+
+    const expectedPids = Array.from(new Set([
+      ...extractPlayerIds(m.side_a),
+      ...extractPlayerIds(m.side_b),
+    ]));
+    let snapshot = (m.handicap_snapshot && typeof m.handicap_snapshot === 'object' && !Array.isArray(m.handicap_snapshot))
+      ? (m.handicap_snapshot as Record<string, number | null>)
+      : undefined;
+    if (expectedPids.length > 0) {
+      let needsSnapshot = !snapshot;
+      if (!needsSnapshot && snapshot) {
+        for (const pid of expectedPids) {
+          if (!(pid in snapshot)) { needsSnapshot = true; break; }
+        }
+      }
+      if (needsSnapshot) {
+        snapshot = await buildHandicapSnapshot(pool, expectedPids);
+        await pool.query(
+          `update matches set handicap_snapshot = $2::jsonb where id = $1`,
+          [m.id, JSON.stringify(snapshot)]
+        );
+      }
+    }
 
     // safe: only reference the detected/created column name
     const cres = await pool.query(
@@ -70,6 +101,7 @@ export const handler: Handler = async (event) => {
         sideB: m.side_b,
         sideATeamId: m.side_a_team_id || undefined,
         sideBTeamId: m.side_b_team_id || undefined,
+        handicapSnapshot: snapshot,
       },
       course: c && {
         id: c.id,

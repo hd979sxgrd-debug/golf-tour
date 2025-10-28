@@ -10,6 +10,7 @@ export type Match = {
   day?: string;
   format: MatchFormat;
   courseId: string;
+  handicapSnapshot?: Record<string, number | null | undefined>;
   /** команда-владалец стороны (для фильтрации списков) */
   sideATeamId?: string;
   sideBTeamId?: string;
